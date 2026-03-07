@@ -32,7 +32,7 @@ SECRET_KEY = 'django-insecure-_u%h!_q2l_l42cg#q@h3ocx=!r3=#v!icu*arh4na-zxls9sdq
 # DEBUG = False
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+ALLOWED_HOSTS = ["*",'localhost', '127.0.0.1']
 
 from datetime import timedelta
 
@@ -89,6 +89,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
+    ""
 ]
 
 from corsheaders.defaults import default_headers
