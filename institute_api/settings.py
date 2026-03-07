@@ -89,7 +89,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
-    ""
+    "http://3.110.173.121:5173/"
 ]
 
 from corsheaders.defaults import default_headers
