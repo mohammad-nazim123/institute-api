@@ -32,7 +32,7 @@ SECRET_KEY = 'django-insecure-_u%h!_q2l_l42cg#q@h3ocx=!r3=#v!icu*arh4na-zxls9sdq
 # DEBUG = False
 DEBUG = True
 
-ALLOWED_HOSTS = ["*",'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['*','localhost', '127.0.0.1']
 
 from datetime import timedelta
 
