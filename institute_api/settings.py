@@ -32,7 +32,7 @@ SECRET_KEY = 'django-insecure-_u%h!_q2l_l42cg#q@h3ocx=!r3=#v!icu*arh4na-zxls9sdq
 # DEBUG = False
 DEBUG = True
 
-ALLOWED_HOSTS = ['*','localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['*','localhost', '127.0.0.1', '.amazonaws.com']
 
 from datetime import timedelta
 
@@ -73,15 +73,15 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    
 ]
 
 ROOT_URLCONF = 'institute_api.urls'
@@ -196,6 +196,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Custom User Model
 AUTH_USER_MODEL = 'my_auth.User'
