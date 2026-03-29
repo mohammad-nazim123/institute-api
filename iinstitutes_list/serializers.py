@@ -2,6 +2,9 @@ from rest_framework.serializers import ModelSerializer
 from rest_framework import serializers
 from .models import Institute
 from collections import OrderedDict
+from students.serializers import StudentSerializer
+from professors.serializers import ProfessorSerializer
+from syllabus.serializers import CourseSerializer
 
 
 class InstituteSerializer(ModelSerializer):
@@ -24,40 +27,17 @@ class InstituteVerifySerializer(serializers.Serializer):
 class InstituteDetailSerializer(ModelSerializer):
     """
     Produces a deeply nested dictionary for a single institute including
-    all students, professors, courses, and schedules.
-    Uses SerializerMethodField with lazy imports to avoid circular imports.
+    all students, professors, and courses.
+    Uses nested serializers so prefetched data can be rendered efficiently.
     """
-    students = serializers.SerializerMethodField()
-    professors = serializers.SerializerMethodField()
-    courses = serializers.SerializerMethodField()
-    weekly_schedule_days = serializers.SerializerMethodField()
-    exam_schedule_dates = serializers.SerializerMethodField()
+    students = StudentSerializer(many=True, read_only=True)
+    professors = ProfessorSerializer(many=True, read_only=True)
+    courses = CourseSerializer(many=True, read_only=True)
 
     class Meta:
         model = Institute
         fields = ['id', 'name', 'event_status', 'event_timer_end',
-                  'students', 'professors', 'courses',
-                  'weekly_schedule_days', 'exam_schedule_dates']
-
-    def get_students(self, obj):
-        from students.serializers import StudentSerializer
-        return StudentSerializer(obj.students.all(), many=True).data
-
-    def get_professors(self, obj):
-        from professors.serializers import ProfessorSerializer
-        return ProfessorSerializer(obj.professors.all(), many=True).data
-
-    def get_courses(self, obj):
-        from syllabus.serializers import CourseSerializer
-        return CourseSerializer(obj.courses.all(), many=True).data
-
-    def get_weekly_schedule_days(self, obj):
-        from schedules.serializers import WeeklyScheduleDaySerializer
-        return WeeklyScheduleDaySerializer(obj.weekly_schedule_days.all(), many=True).data
-
-    def get_exam_schedule_dates(self, obj):
-        from schedules.serializers import ExamScheduleDateSerializer
-        return ExamScheduleDateSerializer(obj.exam_schedule_dates.all(), many=True).data
+                  'students', 'professors', 'courses']
 
     def to_representation(self, instance):
         """Convert to nested dictionary keyed by entity name."""
@@ -81,18 +61,6 @@ class InstituteDetailSerializer(ModelSerializer):
             key = course.get('name', f"id_{course.get('id', 'unknown')}")
             courses_dict[key] = course
 
-        # Convert weekly schedules to dict keyed by day
-        weekly_dict = OrderedDict()
-        for schedule in data.get('weekly_schedule_days', []):
-            key = schedule.get('day', f"id_{schedule.get('id', 'unknown')}")
-            weekly_dict[key] = schedule
-
-        # Convert exam schedules to dict keyed by date
-        exam_dict = OrderedDict()
-        for schedule in data.get('exam_schedule_dates', []):
-            key = str(schedule.get('date', f"id_{schedule.get('id', 'unknown')}"))
-            exam_dict[key] = schedule
-
         return OrderedDict([
             ('id', data['id']),
             ('name', data['name']),
@@ -101,6 +69,4 @@ class InstituteDetailSerializer(ModelSerializer):
             ('students', students_dict),
             ('professors', professors_dict),
             ('courses', courses_dict),
-            ('weekly_schedules', weekly_dict),
-            ('exam_schedules', exam_dict),
         ])

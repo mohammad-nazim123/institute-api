@@ -1,3 +1,4 @@
+from django.db.models import Prefetch
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -5,29 +6,124 @@ from rest_framework import status
 from institute_api.permissions import AttendancePermission
 from students.models import Student
 from .models import Attendance
-from .serializers import StudentSerializer, MarkAttendanceSerializer, AttendanceSerializer
+from .serializers import (
+    AttendanceSerializer,
+    MarkAttendanceSerializer,
+    StudentAttendanceListSerializer,
+)
 
 
 class StudentListView(APIView):
     """
-    GET /api/students/?institute=<id>
+    GET /attendance/students/?institute=<id>
     Returns all students belonging to the verified institute.
-    Requires X-Admin-Key (32-char) or X-Personal-Key (professor's 15-digit ID).
     """
     permission_classes = [AttendancePermission]
 
     def get(self, request):
         institute = request._verified_institute
-        students = Student.objects.filter(institute=institute)
-        serializer = StudentSerializer(students, many=True)
+        queryset = Student.objects.filter(institute=institute).order_by('id')
+
+        search = (request.query_params.get('search') or '').strip()
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+
+        class_name = (request.query_params.get('class_name') or '').strip()
+        branch = (request.query_params.get('branch') or '').strip()
+        academic_term = (request.query_params.get('academic_term') or '').strip()
+
+        if class_name:
+            queryset = queryset.filter(course_assignments__class_name__iexact=class_name)
+        if branch:
+            queryset = queryset.filter(course_assignments__branch__iexact=branch)
+        if academic_term:
+            queryset = queryset.filter(course_assignments__academic_term__iexact=academic_term)
+
+        students = list(queryset.values('id', 'name', 'gender', 'category'))
+        return Response(students, status=status.HTTP_200_OK)
+
+
+class StudentAttendanceBulkView(APIView):
+    """
+    GET /attendance/students/attendance/?institute=<id>&date=YYYY-MM-DD&student_ids=1,2,3
+    Returns many students and their attendance records in one response.
+    """
+    permission_classes = [AttendancePermission]
+
+    def _parse_student_ids(self, request):
+        raw_ids = request.query_params.get('student_ids', '').strip()
+        if not raw_ids:
+            return None
+
+        try:
+            return [int(value.strip()) for value in raw_ids.split(',') if value.strip()]
+        except ValueError:
+            raise ValueError('Invalid student_ids format. Use comma-separated numeric ids.')
+
+    def get(self, request):
+        institute = request._verified_institute
+        date_param = request.query_params.get('date')
+        month_param = request.query_params.get('month')
+
+        if not date_param and not month_param:
+            return Response(
+                {'detail': 'Provide either date=YYYY-MM-DD or month=YYYY-MM.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if date_param and month_param:
+            return Response(
+                {'detail': 'Provide either date or month, not both.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            student_ids = self._parse_student_ids(request)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        students = Student.objects.filter(institute=institute).only(
+            'id',
+            'name',
+            'gender',
+            'category',
+        ).order_by('id')
+        if student_ids is not None:
+            students = students.filter(pk__in=student_ids)
+
+        attendance_queryset = Attendance.objects.select_related('marked_by').order_by('-date')
+        if date_param:
+            attendance_queryset = attendance_queryset.filter(date=date_param)
+        else:
+            try:
+                year, month = month_param.split('-')
+                attendance_queryset = attendance_queryset.filter(date__year=year, date__month=month)
+            except ValueError:
+                return Response(
+                    {'detail': 'Invalid month format. Please use YYYY-MM.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if student_ids is not None:
+            attendance_queryset = attendance_queryset.filter(student_id__in=student_ids)
+
+        students = students.prefetch_related(
+            Prefetch('attendances', queryset=attendance_queryset)
+        )
+
+        serializer = StudentAttendanceListSerializer(students, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class MarkAttendanceView(APIView):
     """
-    POST /api/attendance/mark/?institute=<id>
+    POST /attendance/mark/?institute=<id>
     Bulk create/update attendance for the given date.
-    Requires X-Admin-Key (32-char) or X-Personal-Key (professor's 15-digit ID).
+
+    OPTIMIZED:
+    - Pre-fetches all students in 1 query instead of 1-per-student
+    - Uses bulk_create + update_fields for existing records (2 queries total)
+    - Uses update_or_create for individual records with a students map
     """
     permission_classes = [AttendancePermission]
 
@@ -38,42 +134,78 @@ class MarkAttendanceView(APIView):
 
         date = serializer.validated_data['date']
         records = serializer.validated_data['attendance']
-
-        # The professor who marked attendance (may be None for admin-key access)
         marked_by = getattr(request, '_verified_professor', None)
+
+        # ── 1. Fetch all needed students in ONE query ──────────────────────────
+        student_ids = [r['student_id'] for r in records]
+        students_map = {
+            s.id: s
+            for s in Student.objects.filter(pk__in=student_ids).only('id', 'name')
+        }
+
+        # ── 2. Fetch existing attendance rows for this date in ONE query ───────
+        existing_map = {
+            a.student_id: a
+            for a in Attendance.objects.filter(student_id__in=student_ids, date=date)
+        }
 
         results = []
         errors = []
+        to_create = []
+        to_update = []
 
         for record in records:
-            student_id = record['student_id']
-            try:
-                student = Student.objects.get(pk=student_id)
-            except Student.DoesNotExist:
-                errors.append({'student_id': student_id, 'error': 'Student not found.'})
+            sid = record['student_id']
+            student = students_map.get(sid)
+
+            if student is None:
+                errors.append({'student_id': sid, 'error': 'Student not found.'})
                 continue
 
-            obj, created = Attendance.objects.update_or_create(
-                student=student,
-                date=date,
-                defaults={
-                    'status': record['status'],
-                    'class_name': record.get('class_name', ''),
-                    'branch': record.get('branch', ''),
-                    'year_semester': record.get('year_semester', ''),
-                    'marked_by': marked_by,
-                },
-            )
+            existing = existing_map.get(sid)
+
+            if existing:
+                # Update in-memory; bulk_update below
+                existing.status = record['status']
+                existing.class_name = record.get('class_name', existing.class_name)
+                existing.branch = record.get('branch', existing.branch)
+                existing.year_semester = record.get('year_semester', existing.year_semester)
+                existing.marked_by = marked_by
+                to_update.append(existing)
+                action = 'updated'
+            else:
+                to_create.append(Attendance(
+                    student=student,
+                    date=date,
+                    status=record['status'],
+                    class_name=record.get('class_name', ''),
+                    branch=record.get('branch', ''),
+                    year_semester=record.get('year_semester', ''),
+                    marked_by=marked_by,
+                ))
+                action = 'created'
+
             results.append({
-                'student_id': student_id,
+                'student_id': sid,
                 'student_name': student.name,
                 'date': str(date),
-                'class_name': obj.class_name,
-                'branch': obj.branch,
-                'year_semester': obj.year_semester,
-                'status': obj.status,
-                'action': 'created' if created else 'updated',
+                'class_name': record.get('class_name', ''),
+                'branch': record.get('branch', ''),
+                'year_semester': record.get('year_semester', ''),
+                'status': record['status'],
+                'action': action,
             })
+
+        # ── 3. Bulk create new rows (1 query) ──────────────────────────────────
+        if to_create:
+            Attendance.objects.bulk_create(to_create, ignore_conflicts=True)
+
+        # ── 4. Bulk update existing rows (1 query) ─────────────────────────────
+        if to_update:
+            Attendance.objects.bulk_update(
+                to_update,
+                ['status', 'class_name', 'branch', 'year_semester', 'marked_by'],
+            )
 
         response_data = {'results': results}
         if errors:
@@ -85,10 +217,8 @@ class MarkAttendanceView(APIView):
 
 class StudentAttendanceView(APIView):
     """
-    GET /api/attendance/student/<student_id>/?institute=<id>&date=YYYY-MM-DD&month=YYYY-MM
+    GET /attendance/student/<student_id>/?institute=<id>&date=YYYY-MM-DD&month=YYYY-MM
     Returns attendance records for a specific student.
-    Can filter by specific 'date' or a whole 'month'.
-    Requires X-Admin-Key or X-Personal-Key.
     """
     permission_classes = [AttendancePermission]
 
@@ -96,14 +226,20 @@ class StudentAttendanceView(APIView):
         institute = request._verified_institute
 
         try:
-            student = Student.objects.get(pk=student_id, institute=institute)
+            student = Student.objects.only('id', 'name').get(pk=student_id, institute=institute)
         except Student.DoesNotExist:
             return Response(
                 {'detail': 'Student not found in this institute.'},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        queryset = Attendance.objects.filter(student=student).order_by('-date')
+        # select_related marked_by so the serializer doesn't hit professor table per row
+        queryset = (
+            Attendance.objects
+            .select_related('student', 'marked_by')
+            .filter(student=student)
+            .order_by('-date')
+        )
 
         date_param = request.query_params.get('date')
         month_param = request.query_params.get('month')

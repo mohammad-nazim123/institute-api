@@ -23,3 +23,7 @@ class ProfessorsPayments(models.Model):
     class Meta:
         # Ensures only one payment record per professor per month
         unique_together = ('professor', 'month_year')
+        indexes = [
+            models.Index(fields=['institute', 'month_year'], name='pay_inst_month_idx'),
+            models.Index(fields=['institute', 'professor'], name='pay_inst_prof_idx'),
+        ]

@@ -15,4 +15,16 @@ from mangum import Mangum
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'institute_api.settings')
 
 application = get_asgi_application()
-handler = Mangum(application)
+
+def path_rewrite_middleware(app):
+    async def middleware(scope, receive, send):
+        if scope["type"] == "http":
+            path = scope.get("path", "")
+            # If the path doesn't end with a slash, we add one
+            # because AWS Function URLs strip them and Django expects them.
+            if not path.endswith("/"):
+                scope["path"] = path + "/"
+        await app(scope, receive, send)
+    return middleware
+
+handler = Mangum(path_rewrite_middleware(application))

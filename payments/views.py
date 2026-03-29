@@ -1,3 +1,5 @@
+from collections import OrderedDict
+from django.db import IntegrityError
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -6,6 +8,22 @@ from institute_api.mixins import InstituteDictResponseMixin
 from institute_api.permissions import AttendancePermission
 from .models import ProfessorsPayments
 from .serializers import ProfessorsPaymentsSerializer
+from professors.models import Professor
+
+
+def get_payments_queryset(institute=None):
+    queryset = ProfessorsPayments.objects.only(
+        'id',
+        'institute_id',
+        'professor_id',
+        'month_year',
+        'payment_date',
+        'payment_amount',
+        'payment_status',
+    ).order_by('-month_year', 'id')
+    if institute is not None:
+        queryset = queryset.filter(institute=institute)
+    return queryset
 
 
 class ProfessorsPaymentsViewSet(InstituteDictResponseMixin, ModelViewSet):
@@ -18,9 +36,69 @@ class ProfessorsPaymentsViewSet(InstituteDictResponseMixin, ModelViewSet):
     permission_classes = [AttendancePermission]
 
     def get_queryset(self):
-        return ProfessorsPayments.objects.select_related(
-            'institute', 'professor'
-        ).all()
+        return get_payments_queryset(getattr(self.request, '_verified_institute', None))
+
+    def _build_verified_institute_response(self, institute, serialized_data):
+        return OrderedDict([
+            ('id', institute.id),
+            ('name', institute.name),
+            ('students', []),
+            ('professors', []),
+            ('courses', []),
+            ('weekly_schedules', []),
+            ('exam_schedules', []),
+            ('professors_payments', serialized_data),
+        ])
+
+    def list(self, request, *args, **kwargs):
+        institute = request._verified_institute
+        queryset = self.filter_queryset(self.get_queryset())
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            result = self._build_verified_institute_response(institute, serializer.data)
+            return self.get_paginated_response([result])
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response([self._build_verified_institute_response(institute, serializer.data)])
+
+    def retrieve(self, request, *args, **kwargs):
+        institute = request._verified_institute
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(self._build_verified_institute_response(institute, [serializer.data]))
+
+    def create(self, request, *args, **kwargs):
+        institute = request._verified_institute
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payment = serializer.save()
+        return Response(
+            self._build_verified_institute_response(
+                institute,
+                [self.get_serializer(payment).data],
+            ),
+            status=status.HTTP_201_CREATED,
+        )
+
+    def update(self, request, *args, **kwargs):
+        institute = request._verified_institute
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        payment = serializer.save()
+        return Response(
+            self._build_verified_institute_response(
+                institute,
+                [self.get_serializer(payment).data],
+            )
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
 
 
 class ProfessorPaymentUpsertView(APIView):
@@ -41,8 +119,20 @@ class ProfessorPaymentUpsertView(APIView):
     """
     permission_classes = [AttendancePermission]
 
+    @staticmethod
+    def _payment_payload(payment_id, institute_id, professor_id, month_year, fields):
+        return {
+            'id': payment_id,
+            'institute': institute_id,
+            'professor': professor_id,
+            'month_year': month_year,
+            'payment_date': fields['payment_date'],
+            'payment_amount': fields['payment_amount'],
+            'payment_status': fields['payment_status'],
+        }
+
     def post(self, request):
-        institute = getattr(request, '_verified_institute', None)
+        institute = request._verified_institute
         professor_id = request.data.get('professor')
         month_year = request.data.get('month_year')
 
@@ -52,23 +142,99 @@ class ProfessorPaymentUpsertView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Upsert: get existing or prepare new
-        try:
-            existing = ProfessorsPayments.objects.get(
-                professor_id=professor_id,
-                month_year=month_year
-            )
-            serializer = ProfessorsPaymentsSerializer(
-                existing, data=request.data, partial=True
-            )
-        except ProfessorsPayments.DoesNotExist:
-            serializer = ProfessorsPaymentsSerializer(data=request.data)
+        payment_fields = {
+            'payment_date': None,
+            'payment_amount': 0,
+            'payment_status': '',
+        }
+        updates = {}
+        for field in payment_fields:
+            if field in request.data:
+                updates[field] = request.data.get(field)
 
-        if serializer.is_valid():
-            payment = serializer.save()
+        payment = ProfessorsPayments.objects.filter(
+            institute_id=institute.id,
+            professor_id=professor_id,
+            month_year=month_year,
+        ).values(
+            'id',
+            'payment_date',
+            'payment_amount',
+            'payment_status',
+        ).first()
+
+        if payment is not None:
+            payment_fields.update(payment)
+            payment_fields.update(updates)
+            if updates:
+                ProfessorsPayments.objects.filter(pk=payment['id']).update(**updates)
             return Response(
-                ProfessorsPaymentsSerializer(payment).data,
-                status=status.HTTP_200_OK
+                self._payment_payload(
+                    payment['id'],
+                    institute.id,
+                    professor_id,
+                    month_year,
+                    payment_fields,
+                ),
+                status=status.HTTP_200_OK,
             )
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if not Professor.objects.filter(pk=professor_id, institute_id=institute.id).exists():
+            return Response(
+                {'detail': 'Professor not found in the authenticated institute.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        create_fields = {
+            'institute_id': institute.id,
+            'professor_id': professor_id,
+            'month_year': month_year,
+            **payment_fields,
+            **updates,
+        }
+
+        try:
+            payment = ProfessorsPayments.objects.create(**create_fields)
+        except IntegrityError:
+            payment = ProfessorsPayments.objects.filter(
+                institute_id=institute.id,
+                professor_id=professor_id,
+                month_year=month_year,
+            ).values(
+                'id',
+                'payment_date',
+                'payment_amount',
+                'payment_status',
+            ).first()
+            if payment is None:
+                raise
+
+            payment_fields.update(payment)
+            payment_fields.update(updates)
+            if updates:
+                ProfessorsPayments.objects.filter(pk=payment['id']).update(**updates)
+            return Response(
+                self._payment_payload(
+                    payment['id'],
+                    institute.id,
+                    professor_id,
+                    month_year,
+                    payment_fields,
+                ),
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            self._payment_payload(
+                payment.id,
+                institute.id,
+                professor_id,
+                month_year,
+                {
+                    'payment_date': payment.payment_date,
+                    'payment_amount': payment.payment_amount,
+                    'payment_status': payment.payment_status,
+                },
+            ),
+            status=status.HTTP_200_OK,
+        )

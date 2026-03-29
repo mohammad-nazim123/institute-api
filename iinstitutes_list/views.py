@@ -1,34 +1,87 @@
-from django.shortcuts import render
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from collections import OrderedDict
+from django.db.models import Prefetch
 from .models import Institute
 from .serializers import InstituteSerializer, InstituteDetailSerializer, InstituteVerifySerializer
+from professors.models import Professor
+from students.models import Student
+from syllabus.models import AcademicTerms, Branch, Course, Subject
+
+
+def get_institute_detail_queryset():
+    student_queryset = Student.objects.select_related(
+        'contact_details',
+        'education_details',
+        'admission_details',
+        'course_assignments',
+        'fee_details',
+        'system_details',
+    ).order_by('id')
+
+    professor_queryset = Professor.objects.select_related(
+        'address',
+        'experience',
+        'admin_employement',
+        'class_assigned',
+    ).prefetch_related(
+        'qualification',
+    ).order_by('id')
+
+    course_queryset = Course.objects.only(
+        'id',
+        'institute_id',
+        'name',
+    ).prefetch_related(
+        Prefetch(
+            'branches',
+            queryset=Branch.objects.only(
+                'id',
+                'course_id',
+                'name',
+            ).prefetch_related(
+                Prefetch(
+                    'academic_terms',
+                    queryset=AcademicTerms.objects.only(
+                        'id',
+                        'branch_id',
+                        'name',
+                    ).prefetch_related(
+                        Prefetch(
+                            'subjects',
+                            queryset=Subject.objects.only(
+                                'id',
+                                'academic_terms_id',
+                                'name',
+                                'unit',
+                            ),
+                        )
+                    ).order_by('id'),
+                )
+            ).order_by('id'),
+        )
+    ).order_by('id')
+
+    return Institute.objects.only(
+        'id',
+        'name',
+        'event_status',
+        'event_timer_end',
+    ).prefetch_related(
+        Prefetch('students', queryset=student_queryset),
+        Prefetch('professors', queryset=professor_queryset),
+        Prefetch('courses', queryset=course_queryset),
+    )
 
 
 class InstituteViewSet(ModelViewSet):
     serializer_class = InstituteSerializer
 
     def get_queryset(self):
-        return Institute.objects.prefetch_related(
-            'students__contact_details',
-            'students__education_details',
-            'students__course_details',
-            'students__admission_details',
-            'students__course_assignments',
-            'students__fee_details',
-            'students__system_details',
-            'professors__address',
-            'professors__qualification',
-            'professors__experience',
-            'professors__admin_employement',
-            'professors__class_assigned',
-            'courses__subjects',
-            'weekly_schedule_days__weekly_schedule_data',
-            'exam_schedule_dates__exam_schedule_data',
-        ).all()
+        if self.action in ['list', 'retrieve']:
+            return get_institute_detail_queryset()
+        return Institute.objects.all()
 
     def get_serializer_class(self):
         if self.action in ['list', 'retrieve']:
@@ -62,7 +115,7 @@ class InstituteVerifyView(APIView):
         admin_key = serializer.validated_data['admin_key']
 
         try:
-            institute = Institute.objects.get(name=name, admin_key=admin_key)
+            institute = get_institute_detail_queryset().get(name=name, admin_key=admin_key)
         except Institute.DoesNotExist:
             return Response(
                 {'detail': 'Invalid institute name or admin key.'},

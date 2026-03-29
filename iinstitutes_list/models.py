@@ -35,6 +35,11 @@ class Institute(models.Model):
         help_text='When set, events auto-stop after this date/time'
     )
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['name'], name='institute_name_idx'),
+        ]
+
     @property
     def is_event_active(self):
         """Returns True only when event_status is active."""

@@ -17,4 +17,26 @@ class ProfessorsPaymentsSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProfessorsPayments
-        fields = '__all__'
+        fields = ['id', 'institute', 'professor', 'month_year', 'payment_date', 'payment_amount', 'payment_status']
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        verified_institute = getattr(request, '_verified_institute', None) if request else None
+
+        institute = attrs.get('institute') or getattr(self.instance, 'institute', None)
+        professor = attrs.get('professor') or getattr(self.instance, 'professor', None)
+
+        if verified_institute is not None:
+            if institute is not None and institute != verified_institute:
+                raise serializers.ValidationError({
+                    'institute': ['Institute does not match the authenticated institute.'],
+                })
+            attrs['institute'] = verified_institute
+            institute = verified_institute
+
+        if institute is not None and professor is not None and professor.institute_id != institute.id:
+            raise serializers.ValidationError({
+                'professor': ['Professor does not belong to this institute.'],
+            })
+
+        return attrs

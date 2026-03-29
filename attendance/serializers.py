@@ -11,6 +11,25 @@ class StudentSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'gender', 'category']
 
 
+class StudentAttendanceRecordSerializer(serializers.ModelSerializer):
+    marked_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Attendance
+        fields = ['id', 'date', 'class_name', 'branch', 'year_semester', 'status', 'marked_by', 'marked_by_name']
+
+    def get_marked_by_name(self, obj):
+        return obj.marked_by.name if obj.marked_by else None
+
+
+class StudentAttendanceListSerializer(serializers.ModelSerializer):
+    attendance_records = StudentAttendanceRecordSerializer(source='attendances', many=True, read_only=True)
+
+    class Meta:
+        model = Student
+        fields = ['id', 'name', 'gender', 'category', 'attendance_records']
+
+
 class AttendanceRecordSerializer(serializers.Serializer):
     """Represents a single student's attendance entry inside the bulk payload."""
     student_id = serializers.IntegerField()

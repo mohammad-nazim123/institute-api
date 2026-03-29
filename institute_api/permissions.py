@@ -1,3 +1,6 @@
+import hmac
+
+from django.conf import settings
 from rest_framework.permissions import BasePermission
 from rest_framework.exceptions import PermissionDenied
 
@@ -43,7 +46,7 @@ class InstituteKeyPermission(BasePermission):
             raise PermissionDenied('Admin key is required (X-Admin-Key header or admin_key query param).')
 
         try:
-            institute = Institute.objects.get(pk=institute_id)
+            institute = Institute.objects.only('id', 'admin_key', 'event_status', 'name').get(pk=institute_id)
         except Institute.DoesNotExist:
             raise PermissionDenied('Institute not found.')
 
@@ -61,12 +64,40 @@ class InstituteKeyPermission(BasePermission):
         return True
 
 
+class SuperAdminKeyPermission(BasePermission):
+    """
+    Protects global super-admin resources with the configured 32-character
+    X-Admin-Key header only.
+
+    We intentionally do not accept query parameters for this key so sensitive
+    values are less likely to leak via browser history or logs.
+    """
+
+    message = 'You do not have permission to access this resource.'
+
+    def has_permission(self, request, view):
+        configured_key = getattr(settings, 'ADMIN_KEY', '') or ''
+        provided_key = request.headers.get('X-Admin-Key') or ''
+
+        if len(configured_key) != 32:
+            raise PermissionDenied(self.message)
+
+        if len(provided_key) != 32:
+            raise PermissionDenied(self.message)
+
+        if not hmac.compare_digest(provided_key, configured_key):
+            raise PermissionDenied(self.message)
+
+        request._super_admin_authenticated = True
+        return True
+
+
 class PersonalKeyPermission(BasePermission):
     """
     Used for retrieve (GET by ID) on Student and Professor ViewSets.
 
     The client must send:
-      - header `X-Personal-Key: <16-digit-personal-id>`
+      - header `X-Personal-Key: <personal-id>`
 
     Verifies the key matches the specific object's personal_id and
     that the institute's event_status is active.
@@ -121,11 +152,54 @@ class PersonalKeyPermission(BasePermission):
         return True
 
 
+class StudentPersonalKeyPermission(BasePermission):
+    """
+    Used for student retrieve (GET by ID).
+
+    The client must send:
+      - header `X-Personal-Key: <15-char-student-personal-id>`
+    """
+    message = 'Invalid or missing student personal key.'
+
+    def has_permission(self, request, view):
+        personal_key = request.headers.get('X-Personal-Key') or request.query_params.get('personal_key')
+        if not personal_key:
+            raise PermissionDenied('Student personal key is required (X-Personal-Key header).')
+        if len(personal_key) != 15:
+            raise PermissionDenied('Student personal key must be exactly 15 characters.')
+        request._personal_key = personal_key
+        return True
+
+    def has_object_permission(self, request, view, obj):
+        from students.models import Student
+
+        personal_key = getattr(request, '_personal_key', None)
+        if not personal_key:
+            raise PermissionDenied(self.message)
+        if not isinstance(obj, Student):
+            raise PermissionDenied('Unsupported object type for student personal key check.')
+
+        try:
+            expected_key = obj.system_details.student_personal_id
+        except Exception:
+            raise PermissionDenied('Student system details not found.')
+
+        if personal_key != expected_key:
+            raise PermissionDenied(self.message)
+
+        if obj.institute and obj.institute.event_status != 'active':
+            raise PermissionDenied(
+                f'Institute events are currently {obj.institute.event_status}. Access denied.'
+            )
+
+        return True
+
+
 class AttendancePermission(BasePermission):
     """
     Allows access to Attendance endpoints via EITHER:
       - X-Admin-Key   header: 32-hex-char admin key
-      - X-Personal-Key header: 15-digit professor personal ID
+      - X-Personal-Key header: professor personal ID
 
     The institute must be identified by ?institute=<id> or body field `institute`.
     On success, sets:
@@ -133,7 +207,7 @@ class AttendancePermission(BasePermission):
       - request._verified_professor  (only when authenticated via personal key)
     """
 
-    message = 'Invalid or missing key. Provide X-Admin-Key (32 chars) or X-Personal-Key (15-digit professor ID).'
+    message = 'Invalid or missing key. Provide X-Admin-Key (32 chars) or X-Personal-Key (professor personal ID).'
 
     def _get_institute_id(self, request):
         return (
@@ -150,7 +224,7 @@ class AttendancePermission(BasePermission):
 
         if not admin_key and not personal_key:
             raise PermissionDenied(
-                'Provide X-Admin-Key (32-char admin key) or X-Personal-Key (15-digit professor ID).'
+                'Provide X-Admin-Key (32-char admin key) or X-Personal-Key (professor personal ID).'
             )
 
         institute_id = self._get_institute_id(request)
@@ -158,7 +232,7 @@ class AttendancePermission(BasePermission):
             raise PermissionDenied('institute id is required (query param ?institute= or body field).')
 
         try:
-            institute = Institute.objects.get(pk=institute_id)
+            institute = Institute.objects.only('id', 'admin_key', 'event_status', 'name').get(pk=institute_id)
         except Institute.DoesNotExist:
             raise PermissionDenied('Institute not found.')
 
@@ -198,8 +272,8 @@ class SchedulePermission(BasePermission):
     """
     Allows access to Schedule (weekly & exam) endpoints via ANY of:
       - X-Admin-Key    header: 32-char admin key     → full CRUD
-      - X-Personal-Key header: professor 15-char ID  → full CRUD
-      - X-Personal-Key header: student 15-char ID    → GET (read-only)
+      - X-Personal-Key header: professor personal ID → full CRUD
+      - X-Personal-Key header: student personal ID   → GET (read-only)
 
     The institute must be identified by ?institute=<id> or body field `institute`.
     On success sets one of:
@@ -212,7 +286,7 @@ class SchedulePermission(BasePermission):
 
     message = (
         'Provide X-Admin-Key (32-char) or X-Personal-Key '
-        '(15-char professor or student ID).'
+        '(professor or student personal ID).'
     )
 
     def _get_institute_id(self, request):
@@ -237,7 +311,7 @@ class SchedulePermission(BasePermission):
             raise PermissionDenied('institute id is required (?institute= query param or body field).')
 
         try:
-            institute = Institute.objects.get(pk=institute_id)
+            institute = Institute.objects.only('id', 'admin_key', 'event_status', 'name').get(pk=institute_id)
         except Institute.DoesNotExist:
             raise PermissionDenied('Institute not found.')
 
@@ -297,3 +371,76 @@ class SchedulePermission(BasePermission):
 
         raise PermissionDenied(self.message)
 
+
+class SubjectAssignmentPermission(BasePermission):
+    """
+    Allows SubjectAssigned access via:
+      - X-Admin-Key    header: 32-char admin key     → full CRUD
+      - X-Personal-Key header: student personal ID   → GET only
+
+    The institute must be identified by ?institute=<id> or body field `institute`.
+    On success sets:
+      - request._verified_institute
+      - request._verified_student  (student key)
+    """
+
+    message = 'Provide X-Admin-Key (32-char) or X-Personal-Key (student personal ID).'
+
+    def _get_institute_id(self, request):
+        return (
+            request.query_params.get('institute')
+            or (request.data.get('institute') if hasattr(request, 'data') else None)
+        )
+
+    def has_permission(self, request, view):
+        from iinstitutes_list.models import Institute
+        from students.models import StudentSystemDetails
+
+        admin_key = request.headers.get('X-Admin-Key') or request.query_params.get('admin_key')
+        personal_key = request.headers.get('X-Personal-Key') or request.query_params.get('personal_key')
+
+        if not admin_key and not personal_key:
+            raise PermissionDenied(self.message)
+
+        institute_id = self._get_institute_id(request)
+        if not institute_id:
+            raise PermissionDenied('institute id is required (?institute= query param or body field).')
+
+        try:
+            institute = Institute.objects.only('id', 'admin_key', 'event_status', 'name').get(pk=institute_id)
+        except Institute.DoesNotExist:
+            raise PermissionDenied('Institute not found.')
+
+        if institute.event_status != 'active':
+            raise PermissionDenied(
+                f'Institute events are currently {institute.event_status}. Access denied.'
+            )
+
+        if admin_key:
+            if admin_key == institute.admin_key:
+                request._verified_institute = institute
+                return True
+            if not personal_key:
+                raise PermissionDenied('Invalid admin key for this institute.')
+
+        if personal_key:
+            is_read_only = request.method in ('GET', 'HEAD', 'OPTIONS')
+
+            try:
+                system_details = StudentSystemDetails.objects.select_related(
+                    'student__institute'
+                ).get(student_personal_id=personal_key)
+            except StudentSystemDetails.DoesNotExist:
+                raise PermissionDenied('No student found with the given personal key.')
+
+            if system_details.student.institute_id != institute.id:
+                raise PermissionDenied('Student personal key does not belong to this institute.')
+
+            if not is_read_only:
+                raise PermissionDenied('Students can only read subject assignments. Write operations require X-Admin-Key.')
+
+            request._verified_institute = institute
+            request._verified_student = system_details.student
+            return True
+
+        raise PermissionDenied(self.message)

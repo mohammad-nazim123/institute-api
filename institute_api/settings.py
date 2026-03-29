@@ -16,7 +16,7 @@ import os
 from dotenv import load_dotenv
 from urllib.parse import urlparse, parse_qsl
 
-# load_dotenv()
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -32,7 +32,8 @@ SECRET_KEY = 'django-insecure-_u%h!_q2l_l42cg#q@h3ocx=!r3=#v!icu*arh4na-zxls9sdq
 # DEBUG = False
 DEBUG = True
 
-ALLOWED_HOSTS = ['*','localhost', '127.0.0.1', '.amazonaws.com']
+ALLOWED_HOSTS = ['*','localhost', '127.0.0.1', '.amazonaws.com','vrevk5vzamhsllkypsfme4y2p40uejdg.lambda-url.ap-southeast-2.on.aws']
+APPEND_SLASH = False
 
 from datetime import timedelta
 
@@ -66,10 +67,19 @@ INSTALLED_APPS = [
     'iinstitutes_list',
     'syllabus',
     'professors',
-    'schedules',
-    'unique_ids',
     'payments',
     'attendance',
+    'notifications',
+    'set_exam_data',
+    'weekly_exam_schedule',
+    'published_student',
+    'professor_attendance',
+    'super_admin_account_details',
+    'employee_account_details',
+    'payment_notification',
+    'published_professors',
+    'professor_leaves',
+    'published_schedules',
 ]
 
 MIDDLEWARE = [
@@ -133,7 +143,7 @@ WSGI_APPLICATION = 'institute_api.wsgi.application'
 #     }
 #  }
 
-tmpPostgres=urlparse('postgresql://neondb_owner:npg_FJ6GVXOpv1um@ep-proud-mud-ai9wuq5b-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require')
+tmpPostgres=urlparse('postgresql://neondb_owner:npg_FJ6GVXOpv1um@ep-proud-mud-ai9wuq5b-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require')
 #tmpPostgres = urlparse(os.getenv("DATABASE_URL"))
 DATABASES = {
    'default': {
@@ -144,6 +154,7 @@ DATABASES = {
         'HOST': tmpPostgres.hostname,
         'PORT': 5432,
         "CONN_MAX_AGE": 600,
+        "CONN_HEALTH_CHECKS": True,
         "OPTIONS": {
             "sslmode": "require",
             "connect_timeout": 3,
@@ -200,3 +211,23 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Custom User Model
 AUTH_USER_MODEL = 'my_auth.User'
+
+# ── Email (SMTP) ──────────────────────────────────────────────
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('EMAIL_HOST_USER', '')
+
+# ── Twilio (SMS) ──────────────────────────────────────────────
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN  = os.getenv('TWILIO_AUTH_TOKEN', '')
+TWILIO_FROM_NUMBER = os.getenv('TWILIO_FROM_NUMBER', '')
+
+# ── Admin API Key ─────────────────────────────────────────────
+ADMIN_KEY = os.getenv('ADMIN_KEY', '')
+
+# ── Data Encryption ───────────────────────────────────────────
+DATA_ENCRYPTION_KEY = os.getenv('DATA_ENCRYPTION_KEY', '')
