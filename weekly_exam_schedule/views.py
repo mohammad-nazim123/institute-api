@@ -1,9 +1,19 @@
 from rest_framework import status
+
+from activity_feed.services import log_activity
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from institute_api.permissions import SchedulePermission
+from institute_api.permissions import (
+    ADMIN_ACCESS_CONTROL,
+    STUDENT_ACCESS_CONTROL,
+    SchedulePermission,
+)
+from iinstitutes_list.academic_terms import (
+    canonicalize_institute_academic_term,
+    filter_queryset_by_academic_term,
+)
 
 from .models import (
     ExamScheduleData,
@@ -22,13 +32,21 @@ from .serializers import (
 
 class WeeklyExamScheduleMixin:
     permission_classes = [SchedulePermission]
+    allowed_subordinate_access_controls = (
+        ADMIN_ACCESS_CONTROL,
+        STUDENT_ACCESS_CONTROL,
+    )
 
     def _hierarchy_values(self, request):
         body = request.data if hasattr(request, 'data') else {}
+        institute = getattr(request, '_verified_institute', None)
         return {
             'class_name': request.query_params.get('class_name') or body.get('class_name'),
             'branch': request.query_params.get('branch') or body.get('branch'),
-            'academic_term': request.query_params.get('academic_term') or body.get('academic_term'),
+            'academic_term': canonicalize_institute_academic_term(
+                institute,
+                request.query_params.get('academic_term') or body.get('academic_term'),
+            ),
         }
 
     def _require_hierarchy(self, request):
@@ -42,20 +60,30 @@ class WeeklyExamScheduleMixin:
         return hierarchy
 
     def _weekly_queryset(self, institute, hierarchy):
-        return WeeklyScheduleData.objects.select_related('weekly_schedule_day').filter(
+        queryset = WeeklyScheduleData.objects.select_related('weekly_schedule_day').filter(
             institute=institute,
             class_name=hierarchy['class_name'],
             branch=hierarchy['branch'],
-            academic_term=hierarchy['academic_term'],
         ).order_by('weekly_schedule_day_id', 'id')
+        return filter_queryset_by_academic_term(
+            queryset,
+            'academic_term',
+            hierarchy['academic_term'],
+            institute,
+        )
 
     def _exam_queryset(self, institute, hierarchy):
-        return ExamScheduleData.objects.select_related('exam_schedule_date').filter(
+        queryset = ExamScheduleData.objects.select_related('exam_schedule_date').filter(
             institute=institute,
             class_name=hierarchy['class_name'],
             branch=hierarchy['branch'],
-            academic_term=hierarchy['academic_term'],
         ).order_by('exam_schedule_date_id', 'id')
+        return filter_queryset_by_academic_term(
+            queryset,
+            'academic_term',
+            hierarchy['academic_term'],
+            institute,
+        )
 
     def _dictionary_payload(self, institute, hierarchy):
         weekly_schedule = serialize_weekly_entries(self._weekly_queryset(institute, hierarchy))
@@ -76,7 +104,10 @@ class WeeklyExamScheduleMixin:
         return {
             'class_name': child.class_name,
             'branch': child.branch,
-            'academic_term': child.academic_term,
+            'academic_term': canonicalize_institute_academic_term(
+                child.institute,
+                child.academic_term,
+            ),
         }
 
     def _entry_hierarchy(self, entry, request, child_relation_name):
@@ -115,6 +146,13 @@ class WeeklyExamScheduleDictionaryView(WeeklyExamScheduleMixin, APIView):
 
 class BaseScheduleEntryView(WeeklyExamScheduleMixin, APIView):
     entry_model = None
+
+    def _activity_entity_type(self):
+        return 'weekly schedule' if self.child_payload_key == 'weekly_schedule_data' else 'exam schedule'
+
+    @staticmethod
+    def _hierarchy_label(hierarchy):
+        return f"{hierarchy['class_name']} / {hierarchy['branch']} / {hierarchy['academic_term']}"
     entry_serializer_class = None
     child_model = None
     child_relation_name = ''
@@ -186,7 +224,16 @@ class BaseScheduleEntryView(WeeklyExamScheduleMixin, APIView):
         hierarchy = self._require_hierarchy(request)
         serializer = self.entry_serializer_class(data=self._clean_payload(request))
         serializer.is_valid(raise_exception=True)
-        self._save_entry(institute, serializer, hierarchy)
+        entry = self._save_entry(institute, serializer, hierarchy)
+        log_activity(
+            request,
+            action='create',
+            entity_type=self._activity_entity_type(),
+            entity_id=entry.id,
+            entity_name=self._hierarchy_label(hierarchy),
+            description=f"Created {self._activity_entity_type()} for {self._hierarchy_label(hierarchy)}.",
+            details=hierarchy,
+        )
         return self._dictionary_response(institute, hierarchy)
 
     def put(self, request, pk):
@@ -209,7 +256,16 @@ class BaseScheduleEntryView(WeeklyExamScheduleMixin, APIView):
             partial=partial,
         )
         serializer.is_valid(raise_exception=True)
-        self._save_entry(institute, serializer, hierarchy)
+        entry = self._save_entry(institute, serializer, hierarchy)
+        log_activity(
+            request,
+            action='update',
+            entity_type=self._activity_entity_type(),
+            entity_id=entry.id,
+            entity_name=self._hierarchy_label(hierarchy),
+            description=f"Updated {self._activity_entity_type()} for {self._hierarchy_label(hierarchy)}.",
+            details=hierarchy,
+        )
         return self._dictionary_response(institute, hierarchy)
 
     def delete(self, request, pk):
@@ -220,7 +276,17 @@ class BaseScheduleEntryView(WeeklyExamScheduleMixin, APIView):
             return Response({'detail': 'Schedule item not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         hierarchy = self._entry_hierarchy(entry, request, self.child_relation_name)
+        deleted_payload = {'entity_id': entry.id, 'entity_name': self._hierarchy_label(hierarchy), 'details': hierarchy}
         entry.delete()
+        log_activity(
+            request,
+            action='delete',
+            entity_type=self._activity_entity_type(),
+            entity_id=deleted_payload['entity_id'],
+            entity_name=deleted_payload['entity_name'],
+            description=f"Deleted {self._activity_entity_type()} for {deleted_payload['entity_name']}.",
+            details=deleted_payload['details'],
+        )
         return self._dictionary_response(institute, hierarchy)
 
 

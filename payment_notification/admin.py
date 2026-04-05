@@ -14,7 +14,7 @@ class PaymentNotificationAdmin(admin.ModelAdmin):
         'payment_date',
     )
     search_fields = (
-        'institute__name',
+        'institute__institute_name',
         'professor__name',
         'payment_month_key',
         'account_holder_name',

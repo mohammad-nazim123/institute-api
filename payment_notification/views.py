@@ -1,11 +1,15 @@
 from rest_framework import generics
 
+from activity_feed.services import ActivityLogMixin
+
 from .models import PaymentNotification
 from .permissions import InstitutePaymentNotificationPermission
 from .serializers import PaymentNotificationSerializer
 
 
-class PaymentNotificationListCreateView(generics.ListCreateAPIView):
+class PaymentNotificationListCreateView(ActivityLogMixin, generics.ListCreateAPIView):
+    activity_entity_type = 'payment request'
+    activity_name_field = 'payment_month_key'
     permission_classes = [InstitutePaymentNotificationPermission]
     serializer_class = PaymentNotificationSerializer
 
@@ -33,7 +37,9 @@ class PaymentNotificationListCreateView(generics.ListCreateAPIView):
         return context
 
 
-class PaymentNotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
+class PaymentNotificationDetailView(ActivityLogMixin, generics.RetrieveUpdateDestroyAPIView):
+    activity_entity_type = 'payment request'
+    activity_name_field = 'payment_month_key'
     permission_classes = [InstitutePaymentNotificationPermission]
     serializer_class = PaymentNotificationSerializer
 

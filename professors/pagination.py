@@ -1,8 +1,9 @@
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
+from institute_api.pagination import GracefulPageNumberPagination
 
-class ProfessorPagination(PageNumberPagination):
+
+class ProfessorPagination(GracefulPageNumberPagination):
     page_size = 10
 
     def get_paginated_response(self, data):

@@ -1,11 +1,15 @@
 from rest_framework import generics
 
+from activity_feed.services import ActivityLogMixin
+
 from .models import EmployeeAccountDetail
 from .permissions import InstituteEmployeeAccountPermission
 from .serializers import EmployeeAccountDetailSerializer
 
 
-class EmployeeAccountDetailListCreateView(generics.ListCreateAPIView):
+class EmployeeAccountDetailListCreateView(ActivityLogMixin, generics.ListCreateAPIView):
+    activity_entity_type = 'account detail'
+    activity_name_field = 'professor.name'
     permission_classes = [InstituteEmployeeAccountPermission]
     serializer_class = EmployeeAccountDetailSerializer
 
@@ -26,7 +30,9 @@ class EmployeeAccountDetailListCreateView(generics.ListCreateAPIView):
         return context
 
 
-class EmployeeAccountDetailDetailView(generics.RetrieveUpdateDestroyAPIView):
+class EmployeeAccountDetailDetailView(ActivityLogMixin, generics.RetrieveUpdateDestroyAPIView):
+    activity_entity_type = 'account detail'
+    activity_name_field = 'professor.name'
     permission_classes = [InstituteEmployeeAccountPermission]
     serializer_class = EmployeeAccountDetailSerializer
 

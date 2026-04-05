@@ -30,6 +30,14 @@ class StudentAttendanceListSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'gender', 'category', 'attendance_records']
 
 
+class StudentAttendanceSummarySerializer(serializers.Serializer):
+    student_id = serializers.IntegerField()
+    present = serializers.IntegerField()
+    absent = serializers.IntegerField()
+    total = serializers.IntegerField()
+    percentage = serializers.IntegerField()
+
+
 class AttendanceRecordSerializer(serializers.Serializer):
     """Represents a single student's attendance entry inside the bulk payload."""
     student_id = serializers.IntegerField()

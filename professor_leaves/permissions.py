@@ -1,9 +1,15 @@
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
+from institute_api.permissions import (
+    ADMIN_ACCESS_CONTROL,
+    get_verified_institute,
+    verify_admin_key_for_institute,
+)
+
 
 class ProfessorLeavesPermission(BasePermission):
-    message = 'Provide X-Admin-Key (32 chars) or X-Personal-Key (15 chars).'
+    message = 'Provide X-Admin-Key for institute access or X-Personal-Key (15 chars).'
 
     def _get_institute_id(self, request):
         return (
@@ -12,7 +18,6 @@ class ProfessorLeavesPermission(BasePermission):
         )
 
     def has_permission(self, request, view):
-        from iinstitutes_list.models import Institute
         from published_professors.models import PublishedProfessor
 
         admin_key = request.headers.get('X-Admin-Key')
@@ -25,26 +30,22 @@ class ProfessorLeavesPermission(BasePermission):
         if not institute_id:
             raise PermissionDenied('institute id is required (?institute= query param or body field).')
 
-        try:
-            institute = Institute.objects.only('id', 'name', 'admin_key', 'event_status').get(pk=institute_id)
-        except Institute.DoesNotExist:
-            raise PermissionDenied('Institute not found.')
-
-        if institute.event_status != 'active':
-            raise PermissionDenied(
-                f'Institute events are currently {institute.event_status}. Access denied.'
-            )
+        institute = get_verified_institute(request)
 
         if admin_key:
-            if len(admin_key) != 32:
-                if not personal_key:
-                    raise PermissionDenied('Provide X-Admin-Key with exactly 32 characters.')
-            elif institute.admin_key == admin_key:
-                request._verified_institute = institute
-                request._admin_key = admin_key
+            try:
+                verify_admin_key_for_institute(
+                    request,
+                    institute,
+                    view=view,
+                    message='Invalid admin key for this institute.',
+                    admin_key=admin_key,
+                    allowed_subordinate_access_controls=(ADMIN_ACCESS_CONTROL,),
+                )
                 return True
-            elif not personal_key:
-                raise PermissionDenied('Invalid admin key for this institute.')
+            except PermissionDenied:
+                if not personal_key:
+                    raise
 
         if personal_key:
             if len(personal_key) != 15:

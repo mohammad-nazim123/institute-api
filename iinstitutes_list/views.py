@@ -1,13 +1,16 @@
 from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Prefetch
+from .academic_terms import get_academic_terms_for_institute
 from .models import Institute
 from .serializers import InstituteSerializer, InstituteDetailSerializer, InstituteVerifySerializer
 from professors.models import Professor
 from students.models import Student
 from syllabus.models import AcademicTerms, Branch, Course, Subject
+from subordinate_access.models import SubordinateAccess
 
 
 def get_institute_detail_queryset():
@@ -65,7 +68,10 @@ def get_institute_detail_queryset():
 
     return Institute.objects.only(
         'id',
-        'name',
+        'institute_name',
+        'super_admin_name',
+        'academic_terms_type',
+        'admin_key',
         'event_status',
         'event_timer_end',
     ).prefetch_related(
@@ -99,29 +105,110 @@ class InstituteViewSet(ModelViewSet):
         # Wrap the single instance in a list as requested
         return Response([serializer.data])
 
+    @action(detail=True, methods=['get'], url_path='academic-terms')
+    def academic_terms(self, request, pk=None):
+        institute = self.get_object()
+        return Response({
+            'id': institute.id,
+            'institute_name': institute.institute_name,
+            'name': institute.institute_name,
+            'academic_terms_type': institute.academic_terms_type,
+            'academic_terms': get_academic_terms_for_institute(institute),
+        })
+
 
 class InstituteVerifyView(APIView):
     """
     POST /institutes/verify/
-    Accepts {"name": "...", "admin_key": "..."}
+    Accepts {"institute_name": "...", "super_admin_name": "...", "admin_key": "..."}
     Returns the institute data if the pair matches, or 403 if not.
     """
+
+    def _subordinate_payload(self, subordinate):
+        return {
+            'id': subordinate.id,
+            'post': subordinate.post,
+            'name': subordinate.name,
+            'access_control': subordinate.access_control,
+            'is_active': subordinate.is_active,
+        }
+
+    def _approved_subordinate_response(self, institute, subordinate):
+        detail_institute = get_institute_detail_queryset().get(pk=institute.pk)
+        data = InstituteDetailSerializer(detail_institute).data
+        data['subordinate_access'] = self._subordinate_payload(subordinate)
+        return Response(data, status=status.HTTP_200_OK)
+
+    def _handle_subordinate_login(self, institute, admin_key):
+        subordinate = (
+            SubordinateAccess.objects
+            .filter(institute=institute, access_code=admin_key)
+            .only('id', 'post', 'name', 'access_control', 'is_active', 'institute_id')
+            .first()
+        )
+        if subordinate is None:
+            return Response(
+                {'detail': 'Invalid institute name or admin key.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if subordinate.is_active:
+            return self._approved_subordinate_response(institute, subordinate)
+
+        return Response(
+            {
+                'detail': 'This access key is deactive right now. Please contact the Super Admin.',
+                'subordinate_access': self._subordinate_payload(subordinate),
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
 
     def post(self, request):
         serializer = InstituteVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        name = serializer.validated_data['name']
+        institute_name = serializer.validated_data['institute_name']
+        super_admin_name = serializer.validated_data.get('super_admin_name', '')
         admin_key = serializer.validated_data['admin_key']
 
+        if len(admin_key) == 32:
+            try:
+                institute = get_institute_detail_queryset().get(institute_name=institute_name)
+            except Institute.DoesNotExist:
+                return Response(
+                    {'detail': 'Invalid institute name or admin key.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            if institute.admin_key != admin_key:
+                return Response(
+                    {'detail': 'Invalid institute name or admin key.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            if institute.super_admin_name != super_admin_name:
+                return Response(
+                    {'detail': 'Super admin name does not match.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            detail_serializer = InstituteDetailSerializer(institute)
+            return Response(detail_serializer.data)
+
         try:
-            institute = get_institute_detail_queryset().get(name=name, admin_key=admin_key)
+            institute = Institute.objects.only('id', 'institute_name', 'super_admin_name').get(
+                institute_name=institute_name
+            )
         except Institute.DoesNotExist:
             return Response(
                 {'detail': 'Invalid institute name or admin key.'},
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Return the institute data using the detail serializer
-        detail_serializer = InstituteDetailSerializer(institute)
-        return Response(detail_serializer.data)
+        if len(admin_key) in {29, 30, 31}:
+            return self._handle_subordinate_login(institute, admin_key)
+
+        return Response(
+            {'detail': 'Invalid institute name or admin key.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )

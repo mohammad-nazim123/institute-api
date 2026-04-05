@@ -73,6 +73,7 @@ INSTALLED_APPS = [
     'set_exam_data',
     'weekly_exam_schedule',
     'published_student',
+    'published_exam_result',
     'professor_attendance',
     'super_admin_account_details',
     'employee_account_details',
@@ -80,7 +81,11 @@ INSTALLED_APPS = [
     'published_professors',
     'professor_leaves',
     'published_schedules',
+    'subordinate_access',
+    'archives',
+    'activity_feed',
 ]
+
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',

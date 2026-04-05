@@ -128,6 +128,48 @@ class ProfessorApiTests(TestCase):
             ['Dr Professor 11'],
         )
 
+    def test_list_returns_empty_wrapper_instead_of_error_when_no_professors_exist(self):
+        Professor.objects.filter(institute=self.institute).delete()
+
+        response = self.client.get(
+            f'/professors/professors/?institute={self.institute.id}&page=4',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 0)
+        self.assertEqual(response.data['page'], 1)
+        self.assertEqual(response.data['results']['name'], 'Alpha Institute')
+        self.assertEqual(response.data['results']['professors'], [])
+
+    def test_list_falls_back_to_last_available_page_after_records_are_removed(self):
+        response = self.client.get(
+            f'/professors/professors/?institute={self.institute.id}&page=9',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['page'], 1)
+        self.assertEqual(
+            [professor['name'] for professor in response.data['results']['professors']],
+            ['Dr Bob'],
+        )
+
+    def test_list_returns_empty_state_for_out_of_range_page_after_records_are_removed(self):
+        Professor.objects.filter(institute=self.institute).delete()
+
+        response = self.client.get(
+            f'/professors/professors/?institute={self.institute.id}&page=2',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 0)
+        self.assertEqual(response.data['page'], 1)
+        self.assertEqual(response.data['total_pages'], 1)
+        self.assertEqual(response.data['results']['professors'], [])
+
     def test_search_filters_by_name_employee_id_and_department(self):
         self._create_professor('Dr Charlie', 'PROF-2', 'EMP-CSE', 'Computer Science')
         self._create_professor('Dr Eve', 'PROF-3', 'EMP-MECH', 'Mechanical')
@@ -165,6 +207,16 @@ class ProfessorApiTests(TestCase):
         self.assertEqual(response.data['name'], 'Dr Bob')
         self.assertNotIn('age', response.data)
         self.assertLessEqual(len(queries), 2)
+
+    def test_retrieve_allows_admin_key_without_institute_query(self):
+        response = self.client.get(
+            f'/professors/professors/{self.professor.id}/',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['name'], 'Dr Bob')
+        self.assertEqual(response.data['experience']['department'], 'CSE')
 
     def test_verify_uses_two_queries_or_less(self):
         with CaptureQueriesContext(connection) as queries:

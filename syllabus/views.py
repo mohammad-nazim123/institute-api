@@ -1,7 +1,11 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from institute_api.permissions import InstituteKeyPermission
+from institute_api.permissions import (
+    ADMIN_ACCESS_CONTROL,
+    STUDENT_ACCESS_CONTROL,
+    InstituteKeyPermission,
+)
 from .models import Course, Branch, AcademicTerms, Subject
 from .serializers import CourseSerializer
 
@@ -20,6 +24,10 @@ class CourseView(APIView):
     DELETE /syllabus/course/<pk>/?institute=<id>  → delete
     """
     permission_classes = [InstituteKeyPermission]
+    allowed_subordinate_access_controls = (
+        ADMIN_ACCESS_CONTROL,
+        STUDENT_ACCESS_CONTROL,
+    )
 
     def _get_queryset(self, institute):
         return Course.objects.filter(institute=institute).prefetch_related(

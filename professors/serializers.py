@@ -178,7 +178,7 @@ class ProfessorIdLookUpSerializer(serializers.Serializer):
 
         try:
             filters = {
-                'institute__name': institute_name,
+                'institute__institute_name': institute_name,
                 'admin_employement__personal_id': personal_id,
             }
             if email:

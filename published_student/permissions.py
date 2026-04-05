@@ -25,7 +25,7 @@ class PublishedStudentKeyPermission(BasePermission):
             raise PermissionDenied(self.message)
 
         try:
-            institute = Institute.objects.only('id', 'name', 'event_status').get(pk=institute_id)
+            institute = Institute.objects.only('id', 'institute_name', 'event_status').get(pk=institute_id)
         except Institute.DoesNotExist:
             raise PermissionDenied('Institute not found.')
 

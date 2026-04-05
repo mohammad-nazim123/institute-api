@@ -15,3 +15,4 @@ PASSWORD_HASHERS = [
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 
 DATA_ENCRYPTION_KEY = 'U14pTnymiuoBzFOJUaMr5bBpf6i51_V63C7ld5g_1Ag='
+ADMIN_KEY = 's' * 32

@@ -15,7 +15,7 @@ class EmployeeAccountDetailAdmin(admin.ModelAdmin):
         'ifsc_code',
     )
     search_fields = (
-        'institute__name',
+        'institute__institute_name',
         'professor__name',
         'account_holder_name',
         'bank_name',

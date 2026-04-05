@@ -1,4 +1,6 @@
 from collections import OrderedDict
+
+from activity_feed.services import ActivityLogMixin
 from django.db.models import Prefetch
 from django.db.models import Q
 from rest_framework.viewsets import ModelViewSet
@@ -8,7 +10,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from institute_api.mixins import InstituteDictResponseMixin
-from institute_api.permissions import InstituteKeyPermission, PersonalKeyPermission
+from institute_api.permissions import (
+    ADMIN_ACCESS_CONTROL,
+    InstituteKeyPermission,
+    ProfessorRetrievePermission,
+)
 from .models import ProfessorQualification
 from .pagination import ProfessorPagination
 
@@ -35,11 +41,13 @@ def _clean_query_param(request, key):
     return (request.query_params.get(key) or '').strip()
 
 
-class ProfessorViewSet(InstituteDictResponseMixin, ModelViewSet):
+class ProfessorViewSet(ActivityLogMixin, InstituteDictResponseMixin, ModelViewSet):
+    activity_entity_type = 'professor'
     serializer_class = ProfessorSerializer
     entity_key = 'professors'
     entity_name_field = 'name'
     pagination_class = ProfessorPagination
+    allowed_subordinate_access_controls = (ADMIN_ACCESS_CONTROL,)
 
     def get_queryset(self):
         request = getattr(self, 'request', None)
@@ -71,9 +79,9 @@ class ProfessorViewSet(InstituteDictResponseMixin, ModelViewSet):
         return queryset
 
     def get_permissions(self):
-        """retrieve uses professor's personal key; all other actions require admin key."""
+        """Retrieve supports admin or professor key; all other actions require admin key."""
         if self.action == 'retrieve':
-            return [PersonalKeyPermission()]
+            return [ProfessorRetrievePermission()]
         return [InstituteKeyPermission()]
 
     def _build_verified_institute_response(self, institute, serialized_data):
@@ -145,7 +153,7 @@ class ProfessorVerifyView(APIView):
 
         try:
             professor = get_professor_queryset().get(
-                institute__name=institute_name,
+                institute__institute_name=institute_name,
                 email=email,
                 admin_employement__personal_id=personal_id
             )

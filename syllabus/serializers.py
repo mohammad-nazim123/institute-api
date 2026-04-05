@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.db import transaction
+from iinstitutes_list.academic_terms import canonicalize_institute_academic_term
 from .models import Course, Branch, AcademicTerms, Subject
 
 
@@ -52,15 +53,21 @@ class CourseSerializer(serializers.ModelSerializer):
         if to_create:
             Subject.objects.bulk_create(to_create)
 
-    def _save_academic_terms(self, branch, terms_data):
+    def _save_academic_terms(self, branch, terms_data, institute):
         for item in terms_data:
-            subjects_data = item.pop('subjects', [])
-            term_id = item.pop('id', None)
+            normalized_item = dict(item)
+            if 'name' in normalized_item:
+                normalized_item['name'] = canonicalize_institute_academic_term(
+                    institute,
+                    normalized_item.get('name', ''),
+                )
+            subjects_data = normalized_item.pop('subjects', [])
+            term_id = normalized_item.pop('id', None)
             if term_id:
-                AcademicTerms.objects.filter(pk=term_id, branch=branch).update(**item)
-                term = AcademicTerms(pk=term_id, branch=branch, **item)
+                AcademicTerms.objects.filter(pk=term_id, branch=branch).update(**normalized_item)
+                term = AcademicTerms(pk=term_id, branch=branch, **normalized_item)
             else:
-                term = AcademicTerms.objects.create(branch=branch, **item)
+                term = AcademicTerms.objects.create(branch=branch, **normalized_item)
             self._save_subjects(term, subjects_data)
 
     def _save_branches(self, course, branches_data):
@@ -72,7 +79,7 @@ class CourseSerializer(serializers.ModelSerializer):
                 branch = Branch(pk=branch_id, course=course, **item)
             else:
                 branch = Branch.objects.create(course=course, **item)
-            self._save_academic_terms(branch, terms_data)
+            self._save_academic_terms(branch, terms_data, course.institute)
 
     # ── create ───────────────────────────────────────────────────────────────
     def create(self, validated_data):

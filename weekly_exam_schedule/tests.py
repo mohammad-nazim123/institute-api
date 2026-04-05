@@ -76,7 +76,7 @@ class WeeklyExamScheduleApiTests(TestCase):
         self.assertEqual(response.data['instutes'], 'My Institute')
         self.assertEqual(response.data['class'], 'B.Tech')
         self.assertEqual(response.data['branch'], 'CS')
-        self.assertEqual(response.data['acedemic_terms'], 'Semester 1st')
+        self.assertEqual(response.data['acedemic_terms'], '1st Semester')
         self.assertEqual(response.data['Weekly_schedule'][0]['day'], 'Monday')
         self.assertEqual(response.data['exam_schedule'][0]['date'], '2026-03-25')
 

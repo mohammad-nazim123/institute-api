@@ -1,5 +1,7 @@
 from collections import OrderedDict
 
+from activity_feed.services import log_activity
+
 from django.db.models import Prefetch
 from django.utils import timezone
 from rest_framework import status
@@ -192,6 +194,15 @@ class PublishedProfessorListView(APIView):
                 response_kwargs['detail'] = SINGLE_ALREADY_EXISTS_MESSAGE
                 response_kwargs['already_exists_professor_ids'] = [professor.id]
 
+            log_activity(
+                request,
+                action='sync',
+                entity_type='published professor data',
+                entity_id=professor.id,
+                entity_name=professor.name,
+                description=f"Synced published professor data for {professor.name}.",
+                details=response_kwargs,
+            )
             return Response(
                 build_institute_response(
                     institute,
@@ -287,6 +298,15 @@ class PublishedProfessorListView(APIView):
         if not create_objects and not update_objects and not deleted_count and already_exists_count:
             response_kwargs['detail'] = ALREADY_EXISTS_MESSAGE
 
+        log_activity(
+            request,
+            action='sync',
+            entity_type='published professor data',
+            description=(
+                f"Synced published professor data. Created {len(create_objects)}, updated {len(update_objects)}, removed {deleted_count}."
+            ),
+            details=response_kwargs,
+        )
         return Response(
             build_institute_response(
                 institute,
@@ -370,6 +390,15 @@ class PublishedProfessorDetailView(APIView):
         serializer = PublishedProfessorSerializer(snapshot, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         snapshot = serializer.save()
+        log_activity(
+            request,
+            action='update',
+            entity_type='published professor data',
+            entity_id=snapshot.id,
+            entity_name=snapshot.name,
+            description=f"Updated published professor data for {snapshot.name}.",
+            details={'professor_id': professor_id},
+        )
         return Response(build_institute_response(institute, [PublishedProfessorSerializer(snapshot).data]))
 
     def delete(self, request, professor_id):
@@ -382,7 +411,17 @@ class PublishedProfessorDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        deleted_payload = {'entity_id': snapshot.id, 'entity_name': snapshot.name}
         snapshot.delete()
+        log_activity(
+            request,
+            action='delete',
+            entity_type='published professor data',
+            entity_id=deleted_payload['entity_id'],
+            entity_name=deleted_payload['entity_name'],
+            description=f"Deleted published professor data for {deleted_payload['entity_name']}.",
+            details={'professor_id': professor_id},
+        )
         return Response(
             build_institute_response(institute, [], deleted_professor_id=professor_id),
             status=status.HTTP_200_OK,

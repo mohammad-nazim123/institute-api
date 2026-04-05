@@ -22,12 +22,41 @@ def validate_context_published_professor(serializer, published_professor):
 
 
 def resolve_published_professor(serializer, attrs):
+    from published_professors.models import PublishedProfessor
+
     verified_published_professor = serializer.context.get('verified_published_professor')
+    professor_id = attrs.pop('professor_id', None)
+
+    if professor_id is not None:
+        try:
+            published_professor = PublishedProfessor.objects.get(
+                institute=serializer.context['institute'],
+                source_professor_id=professor_id,
+            )
+        except PublishedProfessor.DoesNotExist as exc:
+            raise serializers.ValidationError(
+                {'professor_id': ['Professor not found in the authenticated institute.']}
+            ) from exc
+
+        validate_context_published_professor(serializer, published_professor)
+
+        existing_published_professor = attrs.get('published_professor')
+        if (
+            existing_published_professor is not None
+            and existing_published_professor.id != published_professor.id
+        ):
+            raise serializers.ValidationError(
+                {'professor_id': ['professor_id does not match published_professor.']}
+            )
+
+        attrs['published_professor'] = published_professor
+        return published_professor
+
     if verified_published_professor is not None and 'published_professor' not in attrs:
         attrs['published_professor'] = verified_published_professor
     elif serializer.instance is None and 'published_professor' not in attrs:
         raise serializers.ValidationError(
-            {'published_professor': ['This field is required.']}
+            {'published_professor': ['This field is required. You can also pass professor_id.']}
         )
     return attrs.get('published_professor') or getattr(serializer.instance, 'published_professor', None)
 
@@ -41,6 +70,7 @@ def apply_published_professor_snapshot(instance, published_professor):
 
 
 class ProfessorLeaveSerializer(serializers.ModelSerializer):
+    professor_id = serializers.IntegerField(write_only=True, required=False)
     professor_name = serializers.CharField(read_only=True)
     department = serializers.CharField(read_only=True)
     email = serializers.EmailField(read_only=True)
@@ -51,6 +81,7 @@ class ProfessorLeaveSerializer(serializers.ModelSerializer):
         model = ProfessorLeave
         fields = [
             'id',
+            'professor_id',
             'published_professor',
             'professor_name',
             'department',
@@ -67,6 +98,15 @@ class ProfessorLeaveSerializer(serializers.ModelSerializer):
             'published_professor': {'required': False},
         }
         validators = []
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['professor_id'] = (
+            instance.published_professor.source_professor_id
+            if instance.published_professor_id
+            else None
+        )
+        return data
 
     def validate_published_professor(self, published_professor):
         return validate_context_published_professor(self, published_professor)

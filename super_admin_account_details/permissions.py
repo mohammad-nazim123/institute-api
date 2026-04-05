@@ -1,6 +1,12 @@
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
+from institute_api.permissions import (
+    ADMIN_ACCESS_CONTROL,
+    get_verified_institute,
+    verify_admin_key_for_institute,
+)
+
 
 class InstituteScopedAccountDetailPermission(BasePermission):
     """
@@ -19,29 +25,17 @@ class InstituteScopedAccountDetailPermission(BasePermission):
         )
 
     def has_permission(self, request, view):
-        from iinstitutes_list.models import Institute
+        institute = get_verified_institute(request)
+        admin_key = request.headers.get('X-Admin-Key')
+        if not admin_key:
+            raise PermissionDenied('Admin key is required (X-Admin-Key header).')
 
-        institute_id = self._get_institute_id(request)
-        admin_key = request.headers.get('X-Admin-Key') or ''
-
-        if not institute_id:
-            raise PermissionDenied('Institute id is required.')
-
-        if len(admin_key) != 32:
-            raise PermissionDenied(self.message)
-
-        try:
-            institute = Institute.objects.get(pk=institute_id)
-        except Institute.DoesNotExist:
-            raise PermissionDenied(self.message)
-
-        if institute.event_status != 'active':
-            raise PermissionDenied(
-                f'Institute events are currently {institute.event_status}. Access denied.'
-            )
-
-        if institute.admin_key != admin_key:
-            raise PermissionDenied(self.message)
-
-        request._verified_institute = institute
+        verify_admin_key_for_institute(
+            request,
+            institute,
+            view=view,
+            message=self.message,
+            admin_key=admin_key,
+            allowed_subordinate_access_controls=(ADMIN_ACCESS_CONTROL,),
+        )
         return True

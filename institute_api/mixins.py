@@ -1,5 +1,6 @@
 from rest_framework.response import Response
 from collections import OrderedDict
+from iinstitutes_list.academic_terms import get_academic_terms_for_institute
 from institute_api.permissions import InstituteKeyPermission
 from rest_framework import serializers
 
@@ -39,7 +40,7 @@ class InstituteDictResponseMixin:
         institute_map = self._get_institute_map(serialized_data)
 
         for item in serialized_data:
-            institute_id, institute_name = self._get_institute_info(
+            institute_id, institute_name, institute_meta = self._get_institute_info(
                 item,
                 institute_map=institute_map,
             )
@@ -48,6 +49,8 @@ class InstituteDictResponseMixin:
                 institutes[institute_id] = OrderedDict([
                     ('id', institute_id),
                     ('name', institute_name),
+                    ('academic_terms_type', institute_meta.get('academic_terms_type')),
+                    ('academic_terms', institute_meta.get('academic_terms', [])),
                     ('students', []),
                     ('professors', []),
                     ('courses', []),
@@ -75,21 +78,36 @@ class InstituteDictResponseMixin:
         from iinstitutes_list.models import Institute
 
         return {
-            institute.id: institute.name
-            for institute in Institute.objects.filter(pk__in=institute_ids).only('id', 'name')
+            institute.id: {
+                'name': institute.institute_name,
+                'academic_terms_type': getattr(institute, 'academic_terms_type', None),
+                'academic_terms': get_academic_terms_for_institute(institute),
+            }
+            for institute in Institute.objects.filter(pk__in=institute_ids).only(
+                'id',
+                'institute_name',
+                'academic_terms_type',
+            )
         }
 
     def _get_institute_info(self, item, institute_map=None):
         """Get institute id and name from serialized data."""
         institute_val = item.get(self.institute_field)
         if isinstance(institute_val, dict):
-            return institute_val.get('id'), institute_val.get('name', 'Unknown Institute')
+            return (
+                institute_val.get('id'),
+                institute_val.get('name', 'Unknown Institute'),
+                {
+                    'academic_terms_type': institute_val.get('academic_terms_type'),
+                    'academic_terms': institute_val.get('academic_terms', []),
+                },
+            )
         
         if institute_val is not None:
             if institute_map and institute_val in institute_map:
-                return institute_val, institute_map[institute_val]
-            return institute_val, 'Unknown Institute'
-        return None, 'Unassigned'
+                return institute_val, institute_map[institute_val]['name'], institute_map[institute_val]
+            return institute_val, 'Unknown Institute', {}
+        return None, 'Unassigned', {}
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())

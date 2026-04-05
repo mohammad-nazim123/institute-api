@@ -1,5 +1,6 @@
 import secrets
 from django.db import models
+from .academic_terms import ACADEMIC_TERMS_TYPE_CHOICES, get_academic_terms_for_institute
 
 
 def generate_unique_key():
@@ -15,7 +16,14 @@ EVENT_STATUS_CHOICES = [
 
 
 class Institute(models.Model):
-    name = models.CharField(max_length=255)
+    institute_name = models.CharField(max_length=255, verbose_name='Institute name')
+    super_admin_name = models.CharField(max_length=255, blank=True, default='')
+    academic_terms_type = models.CharField(
+        max_length=20,
+        choices=ACADEMIC_TERMS_TYPE_CHOICES,
+        default='semester',
+        help_text='Choose whether this institute uses semester-wise or year-wise academic terms.',
+    )
     admin_key = models.CharField(
         max_length=32,
         unique=True,
@@ -37,7 +45,7 @@ class Institute(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=['name'], name='institute_name_idx'),
+            models.Index(fields=['institute_name'], name='institute_name_idx'),
         ]
 
     @property
@@ -45,5 +53,17 @@ class Institute(models.Model):
         """Returns True only when event_status is active."""
         return self.event_status == 'active'
 
+    @property
+    def name(self):
+        return self.institute_name
+
+    @name.setter
+    def name(self, value):
+        self.institute_name = value
+
+    @property
+    def academic_terms(self):
+        return get_academic_terms_for_institute(self)
+
     def __str__(self):
-        return self.name
+        return self.institute_name

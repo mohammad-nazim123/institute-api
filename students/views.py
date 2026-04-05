@@ -1,19 +1,33 @@
 from collections import OrderedDict
 
+from activity_feed.services import ActivityLogMixin, log_activity
+
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.pagination import PageNumberPagination
-from .models import Student, SubjectsAssigned
+from .models import Student, StudentCourseAssignment, SubjectsAssigned
 from rest_framework.views import APIView
 from .serializers import StudentSerializer, StudentIdLookUpSerializer, SubjectsAssignedSerializer
 from rest_framework.response import Response
 from rest_framework import status
 from institute_api.mixins import InstituteDictResponseMixin
-from institute_api.permissions import InstituteKeyPermission, StudentPersonalKeyPermission, SubjectAssignmentPermission
+from institute_api.permissions import (
+    ADMIN_ACCESS_CONTROL,
+    FEE_ACCESS_CONTROL,
+    STUDENT_ACCESS_CONTROL,
+    InstituteKeyPermission,
+    StudentRetrievePermission,
+    SubjectAssignmentPermission,
+)
+from iinstitutes_list.academic_terms import (
+    canonicalize_institute_academic_term,
+    filter_queryset_by_academic_term,
+)
 from iinstitutes_list.models import Institute
+from institute_api.pagination import GracefulPageNumberPagination
 from django.db.models import Q
 
 
-class StudentPagination(PageNumberPagination):
+class StudentPagination(GracefulPageNumberPagination):
     page_size = 25
     page_size_query_param = 'page_size'
     max_page_size = 200
@@ -142,6 +156,7 @@ def get_student_detail_queryset(institute=None):
 
 
 def apply_student_filters(queryset, request):
+    institute = getattr(request, '_verified_institute', None)
     search = (request.query_params.get('search') or '').strip()
     if search:
         return queryset.filter(
@@ -157,23 +172,79 @@ def apply_student_filters(queryset, request):
 
     class_name = (request.query_params.get('class_name') or '').strip()
     branch = (request.query_params.get('branch') or '').strip()
-    academic_term = (request.query_params.get('academic_term') or '').strip()
+    academic_term = canonicalize_institute_academic_term(
+        institute,
+        (request.query_params.get('academic_term') or '').strip(),
+    )
 
     if class_name:
         queryset = queryset.filter(course_assignments__class_name__iexact=class_name)
     if branch:
         queryset = queryset.filter(course_assignments__branch__iexact=branch)
     if academic_term:
-        queryset = queryset.filter(course_assignments__academic_term__iexact=academic_term)
+        queryset = filter_queryset_by_academic_term(
+            queryset,
+            'course_assignments__academic_term',
+            academic_term,
+            institute,
+        )
 
     return queryset
 
 
-class StudentViewSet(InstituteDictResponseMixin, ModelViewSet):
+class StudentViewSet(ActivityLogMixin, InstituteDictResponseMixin, ModelViewSet):
+    activity_entity_type = 'student'
     serializer_class = StudentSerializer
     entity_key = 'students'
     entity_name_field = 'name'
     pagination_class = StudentPagination
+    allowed_subordinate_access_controls = (
+        ADMIN_ACCESS_CONTROL,
+        STUDENT_ACCESS_CONTROL,
+        FEE_ACCESS_CONTROL,
+    )
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        self._enforce_fee_access_scope(request)
+
+    def _is_fee_access_request(self, request):
+        return getattr(request, '_verified_access_control', '') == FEE_ACCESS_CONTROL
+
+    def _is_fee_only_patch(self, request):
+        if not isinstance(request.data, dict):
+            return False
+
+        payload_keys = set(request.data.keys())
+        if not payload_keys or payload_keys - {'fee_details'}:
+            return False
+
+        fee_details = request.data.get('fee_details')
+        if not isinstance(fee_details, dict) or not fee_details:
+            return False
+
+        return set(fee_details.keys()).issubset({
+            'total_fee_amount',
+            'paid_amount',
+            'pending_amount',
+        })
+
+    def _enforce_fee_access_scope(self, request):
+        if not self._is_fee_access_request(request):
+            return
+
+        if self.action in ('list',):
+            return
+
+        if self.action == 'partial_update' and self._is_fee_only_patch(request):
+            return
+
+        raise PermissionDenied('Fee access can only view students and update fee details.')
+
+    def get_activity_entity_type(self, action, instance):
+        if action == 'update' and self._is_fee_only_patch(self.request):
+            return 'student fee'
+        return super().get_activity_entity_type(action, instance)
 
     def get_queryset(self):
         request = getattr(self, 'request', None)
@@ -186,9 +257,9 @@ class StudentViewSet(InstituteDictResponseMixin, ModelViewSet):
         return apply_student_filters(queryset, request)
 
     def get_permissions(self):
-        """retrieve uses student's personal key; all other actions require admin key."""
+        """retrieve accepts admin or student key; all other actions require admin key."""
         if self.action == 'retrieve':
-            return [StudentPersonalKeyPermission()]
+            return [StudentRetrievePermission()]
         return [InstituteKeyPermission()]
 
     def retrieve(self, request, *args, **kwargs):
@@ -320,6 +391,11 @@ class SubjectsAssignedView(APIView):
     Write: X-Admin-Key only
     """
     permission_classes = [SubjectAssignmentPermission]
+    allowed_subordinate_access_controls = (
+        ADMIN_ACCESS_CONTROL,
+        STUDENT_ACCESS_CONTROL,
+    )
+    bulk_create_batch_size = 1000
 
     def _get_subject_payload(self, request):
         if isinstance(request.data, list):
@@ -334,20 +410,95 @@ class SubjectsAssignedView(APIView):
     def _normalize_subject(self, subject):
         return ' '.join((subject or '').strip().lower().split())
 
+    def _serialize_created_subjects(self, assignments):
+        return [
+            {
+                'id': assignment.id,
+                'student': assignment.student_id,
+                'subject': assignment.subject,
+                'unit': assignment.unit,
+            }
+            for assignment in assignments
+        ]
+
+    def _build_bulk_response_payload(
+        self,
+        created_assignments,
+        duplicate_items,
+        *,
+        detail,
+        extra_payload=None,
+    ):
+        payload = {
+            'detail': detail,
+            'created_subjects': self._serialize_created_subjects(created_assignments),
+            'created_count': len(created_assignments),
+            'already_assigned_count': len(duplicate_items),
+        }
+        if duplicate_items:
+            payload['already_assigned'] = duplicate_items
+            payload['message'] = (
+                'Some subjects are already assigned.'
+                if created_assignments
+                else 'All provided subjects are already assigned.'
+            )
+        if extra_payload:
+            payload.update(extra_payload)
+        return payload
+
+    def _log_bulk_subject_assignment(
+        self,
+        request,
+        created_assignments,
+        duplicate_items,
+        *,
+        extra_details=None,
+    ):
+        if not created_assignments:
+            return
+
+        subject_names = sorted({assignment.subject for assignment in created_assignments})
+        student_ids = {assignment.student_id for assignment in created_assignments}
+        if len(subject_names) == 1:
+            entity_name = subject_names[0]
+            description = f"{entity_name} was assigned to {len(student_ids)} students."
+        else:
+            entity_name = f"{len(created_assignments)} subject assignments"
+            description = (
+                f"{len(created_assignments)} subject assignments were created for "
+                f"{len(student_ids)} students."
+            )
+
+        details = {
+            'student_count': len(student_ids),
+            'created_count': len(created_assignments),
+            'already_assigned_count': len(duplicate_items),
+            'subjects': subject_names,
+        }
+        if extra_details:
+            details.update(extra_details)
+
+        log_activity(
+            request,
+            action='create',
+            entity_type='assigned subject',
+            entity_name=entity_name,
+            description=description,
+            details=details,
+        )
+
     def _find_duplicate_subjects(self, validated_items):
         student_ids = {
             item['student'].id if hasattr(item['student'], 'id') else item['student']
             for item in validated_items
         }
         existing_subjects = {}
-        for row in (
+        for student_id, subject in (
             SubjectsAssigned.objects
             .filter(student_id__in=student_ids)
-            .values('student_id', 'subject')
+            .values_list('student_id', 'subject')
         ):
-            existing_subjects.setdefault(row['student_id'], set()).add(
-                self._normalize_subject(row['subject'])
-            )
+            existing_subjects.setdefault(student_id, set()).add(self._normalize_subject(subject))
 
         request_subjects = {}
         creatable_items = []
@@ -374,6 +525,178 @@ class SubjectsAssignedView(APIView):
             creatable_items.append(item)
 
         return creatable_items, duplicate_items
+
+    def _validate_bulk_subject_payload(self, payload, institute):
+        errors = []
+        provisional_items = []
+        student_ids = set()
+
+        for item in payload:
+            item_errors = {}
+
+            if not isinstance(item, dict):
+                errors.append({'non_field_errors': ['Each item must be an object.']})
+                continue
+
+            raw_student = item.get('student')
+            if raw_student in (None, ''):
+                item_errors['student'] = ['This field is required.']
+                student_id = None
+            else:
+                try:
+                    student_id = int(raw_student)
+                except (TypeError, ValueError):
+                    item_errors['student'] = ['A valid integer is required.']
+                    student_id = None
+
+            subject = str(item.get('subject') or '').strip()
+            if not subject:
+                item_errors['subject'] = ['This field is required.']
+
+            unit = str(item.get('unit') or '').strip()
+            if not unit:
+                item_errors['unit'] = ['This field is required.']
+
+            errors.append(item_errors)
+            if item_errors:
+                continue
+
+            provisional_items.append({
+                'index': len(errors) - 1,
+                'student': student_id,
+                'subject': subject,
+                'unit': unit,
+            })
+            student_ids.add(student_id)
+
+        valid_student_ids = set(
+            Student.objects
+            .filter(institute=institute, pk__in=student_ids)
+            .values_list('id', flat=True)
+        )
+
+        validated_items = []
+        for item in provisional_items:
+            if item['student'] not in valid_student_ids:
+                errors[item['index']]['student'] = [
+                    f'Invalid pk "{item["student"]}" - object does not exist.'
+                ]
+                continue
+
+            validated_items.append({
+                'student': item['student'],
+                'subject': item['subject'],
+                'unit': item['unit'],
+            })
+
+        if any(item_errors for item_errors in errors):
+            return None, errors
+
+        return validated_items, None
+
+    def _get_hierarchy_bulk_request(self, request):
+        if not hasattr(request.data, 'get'):
+            return None, None
+
+        has_hierarchy_input = any(
+            str(request.data.get(field) or '').strip()
+            for field in ('class_name', 'branch', 'academic_term')
+        )
+        if not has_hierarchy_input:
+            return None, None
+
+        if request.data.get('student') not in (None, ''):
+            return None, None
+
+        institute = request._verified_institute
+        payload = {
+            'subject': str(request.data.get('subject') or '').strip(),
+            'unit': str(request.data.get('unit') or '').strip(),
+            'class_name': str(request.data.get('class_name') or '').strip(),
+            'branch': str(request.data.get('branch') or '').strip(),
+            'academic_term': canonicalize_institute_academic_term(
+                institute,
+                str(request.data.get('academic_term') or '').strip(),
+            ),
+        }
+
+        errors = {}
+        for field, value in payload.items():
+            if not value:
+                errors[field] = ['This field is required.']
+
+        if errors:
+            return None, errors
+
+        return payload, None
+
+    def _get_matching_student_ids(self, institute, hierarchy_payload):
+        queryset = StudentCourseAssignment.objects.filter(student__institute=institute)
+        queryset = queryset.filter(class_name__iexact=hierarchy_payload['class_name'])
+        queryset = queryset.filter(branch__iexact=hierarchy_payload['branch'])
+        queryset = filter_queryset_by_academic_term(
+            queryset,
+            'academic_term',
+            hierarchy_payload['academic_term'],
+            institute,
+        )
+        return list(
+            queryset.order_by('student_id').values_list('student_id', flat=True)
+        )
+
+    def _create_bulk_subject_assignments(
+        self,
+        request,
+        validated_items,
+        *,
+        created_detail,
+        no_changes_detail,
+        success_status=status.HTTP_201_CREATED,
+        allow_no_changes_success=False,
+        extra_response_payload=None,
+        extra_log_details=None,
+    ):
+        creatable_items, duplicate_items = self._find_duplicate_subjects(validated_items)
+
+        if not creatable_items:
+            response_payload = self._build_bulk_response_payload(
+                [],
+                duplicate_items,
+                detail=no_changes_detail,
+                extra_payload=extra_response_payload,
+            )
+            response_status = (
+                status.HTTP_200_OK
+                if allow_no_changes_success
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return Response(response_payload, status=response_status)
+
+        created_assignments = SubjectsAssigned.objects.bulk_create(
+            [
+                SubjectsAssigned(
+                    student_id=item['student'],
+                    subject=item['subject'],
+                    unit=item['unit'],
+                )
+                for item in creatable_items
+            ],
+            batch_size=self.bulk_create_batch_size,
+        )
+        self._log_bulk_subject_assignment(
+            request,
+            created_assignments,
+            duplicate_items,
+            extra_details=extra_log_details,
+        )
+
+        response_payload = self._build_bulk_response_payload(
+            created_assignments,
+            duplicate_items,
+            detail=created_detail.format(created_count=len(created_assignments)),
+            extra_payload=extra_response_payload,
+        )
+        return Response(response_payload, status=success_status)
 
     def get(self, request, pk=None):
         """List subjects. pk in the URL path is treated as student_id."""
@@ -404,6 +727,57 @@ class SubjectsAssignedView(APIView):
         POST /subjects/               → body must include student field
         Uses bulk_create when a list is given — 1 INSERT for any number of subjects.
         """
+        hierarchy_payload, hierarchy_errors = self._get_hierarchy_bulk_request(request)
+        if hierarchy_errors is not None:
+            return Response(hierarchy_errors, status=status.HTTP_400_BAD_REQUEST)
+
+        if hierarchy_payload is not None:
+            institute = request._verified_institute
+            student_ids = self._get_matching_student_ids(institute, hierarchy_payload)
+            if not student_ids:
+                return Response(
+                    {
+                        'detail': 'No students found for the selected class, branch, and academic term.',
+                        'created_subjects': [],
+                        'created_count': 0,
+                        'already_assigned_count': 0,
+                        'matched_students': 0,
+                        'class_name': hierarchy_payload['class_name'],
+                        'branch': hierarchy_payload['branch'],
+                        'academic_term': hierarchy_payload['academic_term'],
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            validated_items = [
+                {
+                    'student': student_id,
+                    'subject': hierarchy_payload['subject'],
+                    'unit': hierarchy_payload['unit'],
+                }
+                for student_id in student_ids
+            ]
+            return self._create_bulk_subject_assignments(
+                request,
+                validated_items,
+                created_detail='Assigned subject to {created_count} students.',
+                no_changes_detail='Subject is already assigned to all matching students.',
+                allow_no_changes_success=True,
+                extra_response_payload={
+                    'matched_students': len(student_ids),
+                    'class_name': hierarchy_payload['class_name'],
+                    'branch': hierarchy_payload['branch'],
+                    'academic_term': hierarchy_payload['academic_term'],
+                },
+                extra_log_details={
+                    'matched_students': len(student_ids),
+                    'class_name': hierarchy_payload['class_name'],
+                    'branch': hierarchy_payload['branch'],
+                    'academic_term': hierarchy_payload['academic_term'],
+                    'unit': hierarchy_payload['unit'],
+                },
+            )
+
         payload = self._get_subject_payload(request)
         many = isinstance(payload, list)
 
@@ -415,33 +789,35 @@ class SubjectsAssignedView(APIView):
         else:
             data = payload
 
-        serializer = SubjectsAssignedSerializer(data=data, many=many)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        validated_items = serializer.validated_data if many else [serializer.validated_data]
-        creatable_items, duplicate_items = self._find_duplicate_subjects(validated_items)
-
         if many:
-            if not creatable_items:
+            if not data:
                 return Response(
                     {
-                        'detail': 'All provided subjects are already assigned.',
-                        'already_assigned': duplicate_items,
+                        'detail': 'At least one subject assignment is required.',
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            objs = SubjectsAssigned.objects.bulk_create([
-                SubjectsAssigned(**item) for item in creatable_items
-            ])
-            payload = {
-                'created_subjects': SubjectsAssignedSerializer(objs, many=True).data,
-            }
-            if duplicate_items:
-                payload['message'] = 'Some subjects are already assigned.'
-                payload['already_assigned'] = duplicate_items
-            return Response(payload, status=status.HTTP_201_CREATED)
+            validated_items, validation_errors = self._validate_bulk_subject_payload(
+                data,
+                request._verified_institute,
+            )
+            if validation_errors is not None:
+                return Response(validation_errors, status=status.HTTP_400_BAD_REQUEST)
+
+            return self._create_bulk_subject_assignments(
+                request,
+                validated_items,
+                created_detail='Created {created_count} subject assignments.',
+                no_changes_detail='All provided subjects are already assigned.',
+            )
+
+        serializer = SubjectsAssignedSerializer(data=data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        validated_items = [serializer.validated_data]
+        creatable_items, duplicate_items = self._find_duplicate_subjects(validated_items)
 
         if duplicate_items:
             return Response(
@@ -449,7 +825,16 @@ class SubjectsAssignedView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer.save()
+        subject = serializer.save()
+        log_activity(
+            request,
+            action='create',
+            entity_type='assigned subject',
+            entity_id=subject.id,
+            entity_name=subject.subject,
+            description=f"{subject.subject} was assigned to student #{subject.student_id}.",
+            details={'student_id': subject.student_id, 'unit': subject.unit},
+        )
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def put(self, request, pk):
@@ -478,7 +863,16 @@ class SubjectsAssignedView(APIView):
                     {'detail': 'Subject already assigned for this student.'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            serializer.save()
+            subject = serializer.save()
+            log_activity(
+                request,
+                action='update',
+                entity_type='assigned subject',
+                entity_id=subject.id,
+                entity_name=subject.subject,
+                description=f"{subject.subject} assignment was updated for student #{subject.student_id}.",
+                details={'student_id': subject.student_id, 'unit': subject.unit},
+            )
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -493,7 +887,22 @@ class SubjectsAssignedView(APIView):
         except SubjectsAssigned.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        deleted_payload = {
+            'entity_id': obj.id,
+            'entity_name': obj.subject,
+            'description': f"{obj.subject} assignment was removed from student #{obj.student_id}.",
+            'details': {'student_id': obj.student_id},
+        }
         obj.delete()
+        log_activity(
+            request,
+            action='delete',
+            entity_type='assigned subject',
+            entity_id=deleted_payload['entity_id'],
+            entity_name=deleted_payload['entity_name'],
+            description=deleted_payload['description'],
+            details=deleted_payload['details'],
+        )
         return Response({'detail': 'Subject assignment deleted.'}, status=status.HTTP_200_OK)
 
 class StudentFetchByPersonalKeyView(APIView):

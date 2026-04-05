@@ -214,6 +214,96 @@ class ProfessorLeavesApiTests(ProfessorLeavesBaseTestCase):
         self.assertNotIn('total_leaves', response.data[0])
         self.assertNotIn('remaining_leaves', response.data[0])
 
+    def test_create_leave_accepts_professor_id(self):
+        response = self.client.post(
+            f'/professor_leaves/leaves/?institute={self.institute.id}',
+            data={
+                'professor_id': self.professor.id,
+                'start_date': '2026-04-08',
+                'end_date': '2026-04-10',
+                'reason': 'Medical leave',
+                'leaves_status': ProfessorLeave.LeaveStatus.ACCEPTED,
+            },
+            format='json',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['professor_id'], self.professor.id)
+        self.assertEqual(response.data['professor_name'], 'Dr Bob')
+        self.assertEqual(response.data['leaves_status'], ProfessorLeave.LeaveStatus.ACCEPTED)
+
+    def test_leave_list_filters_by_professor_id_and_month_year_overlap(self):
+        ProfessorLeave.objects.create(
+            institute=self.institute,
+            published_professor=self.published_professor,
+            professor_name='Dr Bob',
+            department='CSE',
+            email='bob@example.com',
+            start_date=date(2026, 3, 30),
+            end_date=date(2026, 4, 2),
+            reason='Conference',
+            leaves_status=ProfessorLeave.LeaveStatus.ACCEPTED,
+        )
+        ProfessorLeave.objects.create(
+            institute=self.institute,
+            published_professor=self.published_professor,
+            professor_name='Dr Bob',
+            department='CSE',
+            email='bob@example.com',
+            start_date=date(2026, 5, 10),
+            end_date=date(2026, 5, 12),
+            reason='Medical',
+            leaves_status=ProfessorLeave.LeaveStatus.PENDING,
+        )
+        ProfessorLeave.objects.create(
+            institute=self.institute,
+            published_professor=self.second_published_professor,
+            professor_name='Dr Alice',
+            department='AI',
+            email='alice@example.com',
+            start_date=date(2026, 4, 8),
+            end_date=date(2026, 4, 9),
+            reason='Workshop',
+            leaves_status=ProfessorLeave.LeaveStatus.ACCEPTED,
+        )
+
+        response = self.client.get(
+            f'/professor_leaves/leaves/?institute={self.institute.id}'
+            f'&professor_id={self.professor.id}&month=4&year=2026&leaves_status=accepted',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['professor_id'], self.professor.id)
+        self.assertEqual(response.data[0]['professor_name'], 'Dr Bob')
+        self.assertEqual(response.data[0]['start_date'], '2026-03-30')
+        self.assertEqual(response.data[0]['end_date'], '2026-04-02')
+
+    def test_leave_list_filters_by_professor_id_and_compact_month(self):
+        ProfessorLeave.objects.create(
+            institute=self.institute,
+            published_professor=self.published_professor,
+            professor_name='Dr Bob',
+            department='CSE',
+            email='bob@example.com',
+            start_date=date(2026, 4, 5),
+            end_date=date(2026, 4, 6),
+            reason='Event',
+        )
+
+        response = self.client.get(
+            f'/professor_leaves/leaves/?institute={self.institute.id}'
+            f'&professor_id={self.professor.id}&month=2026-04',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['professor_id'], self.professor.id)
+        self.assertEqual(response.data[0]['start_date'], '2026-04-05')
+
     def test_retrieve_leave_returns_total_days(self):
         leave = ProfessorLeave.objects.create(
             institute=self.institute,

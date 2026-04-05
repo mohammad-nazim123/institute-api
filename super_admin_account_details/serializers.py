@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 
 from .models import SuperAdminAccountDetail
@@ -13,6 +14,8 @@ class SuperAdminAccountDetailSerializer(serializers.ModelSerializer):
             'bank_name',
             'account_number',
             'ifsc_code',
+            'card_design',
+            'is_default',
             'created_at',
             'updated_at',
         ]
@@ -36,6 +39,37 @@ class SuperAdminAccountDetailSerializer(serializers.ModelSerializer):
     def validate_ifsc_code(self, value):
         return value.strip().upper()
 
+    def validate_card_design(self, value):
+        return value.strip().lower()
+
     def create(self, validated_data):
-        validated_data['institute'] = self.context['institute']
-        return super().create(validated_data)
+        institute = self.context['institute']
+        validated_data['institute'] = institute
+
+        if not SuperAdminAccountDetail.objects.filter(institute=institute).exists():
+            validated_data['is_default'] = True
+
+        with transaction.atomic():
+            instance = super().create(validated_data)
+
+            if instance.is_default:
+                SuperAdminAccountDetail.objects.filter(
+                    institute=institute
+                ).exclude(pk=instance.pk).update(is_default=False)
+
+        return instance
+
+    def update(self, instance, validated_data):
+        with transaction.atomic():
+            instance = super().update(instance, validated_data)
+            other_accounts = SuperAdminAccountDetail.objects.filter(
+                institute=instance.institute
+            ).exclude(pk=instance.pk)
+
+            if instance.is_default:
+                other_accounts.update(is_default=False)
+            elif not other_accounts.filter(is_default=True).exists():
+                instance.is_default = True
+                instance.save(update_fields=['is_default', 'updated_at'])
+
+        return instance

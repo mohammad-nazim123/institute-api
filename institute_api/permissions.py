@@ -4,6 +4,147 @@ from django.conf import settings
 from rest_framework.permissions import BasePermission
 from rest_framework.exceptions import PermissionDenied
 
+FULL_ACCESS_CONTROL = 'full access'
+ADMIN_ACCESS_CONTROL = 'admin access'
+STUDENT_ACCESS_CONTROL = 'student access'
+FEE_ACCESS_CONTROL = 'fee access'
+
+
+def get_request_institute_id(request):
+    institute_id = request.query_params.get('institute')
+    if not institute_id and hasattr(request, 'data'):
+        institute_id = request.data.get('institute')
+    return institute_id
+
+
+def get_request_admin_key(request):
+    return (
+        request.headers.get('X-Admin-Key')
+        or request.query_params.get('admin_key')
+    )
+
+
+def normalize_access_control(value):
+    return ' '.join(str(value or '').strip().lower().split())
+
+
+def get_allowed_subordinate_access_controls(view=None, explicit=None):
+    raw_values = explicit
+    if raw_values is None and view is not None:
+        raw_values = getattr(view, 'allowed_subordinate_access_controls', ())
+
+    if isinstance(raw_values, str):
+        raw_values = (raw_values,)
+
+    return {
+        normalized
+        for normalized in (
+            normalize_access_control(value)
+            for value in (raw_values or ())
+        )
+        if normalized
+    }
+
+
+def get_verified_institute(request):
+    from iinstitutes_list.models import Institute
+
+    institute_id = get_request_institute_id(request)
+    if not institute_id:
+        raise PermissionDenied('Institute id is required.')
+
+    try:
+        institute = Institute.objects.only(
+            'id',
+            'admin_key',
+            'academic_terms_type',
+            'event_status',
+            'institute_name',
+            'super_admin_name',
+        ).get(pk=institute_id)
+    except Institute.DoesNotExist:
+        raise PermissionDenied('Institute not found.')
+
+    if institute.event_status != 'active':
+        raise PermissionDenied(
+            f'Institute events are currently {institute.event_status}. Access denied.'
+        )
+
+    return institute
+
+
+def cache_verified_admin_request(request, institute, admin_key, subordinate=None):
+    request._verified_institute = institute
+    request._admin_key = admin_key
+
+    if subordinate is None:
+        request._verified_subordinate_access = None
+        request._verified_access_control = FULL_ACCESS_CONTROL
+        request._verified_actor_role = 'Super Admin'
+        request._verified_actor_name = getattr(institute, 'super_admin_name', '')
+        return
+
+    request._verified_subordinate_access = subordinate
+    request._verified_access_control = normalize_access_control(subordinate.access_control)
+    request._verified_actor_role = subordinate.post
+    request._verified_actor_name = subordinate.name
+
+
+def verify_admin_key_for_institute(
+    request,
+    institute,
+    *,
+    view=None,
+    message='Invalid or missing admin key for this institute.',
+    admin_key=None,
+    allowed_subordinate_access_controls=None,
+):
+    from subordinate_access.models import SubordinateAccess
+
+    resolved_admin_key = admin_key if admin_key is not None else get_request_admin_key(request)
+
+    if not resolved_admin_key:
+        raise PermissionDenied('Admin key is required (X-Admin-Key header or admin_key query param).')
+
+    if hmac.compare_digest(str(institute.admin_key or ''), str(resolved_admin_key)):
+        cache_verified_admin_request(request, institute, resolved_admin_key)
+        return True
+
+    allowed_controls = get_allowed_subordinate_access_controls(
+        view=view,
+        explicit=allowed_subordinate_access_controls,
+    )
+    if not allowed_controls:
+        raise PermissionDenied(message)
+
+    subordinate = (
+        SubordinateAccess.objects
+        .filter(
+            institute=institute,
+            access_code=resolved_admin_key,
+            is_active=True,
+        )
+        .only(
+            'id',
+            'institute_id',
+            'post',
+            'name',
+            'access_control',
+            'access_code',
+            'is_active',
+        )
+        .first()
+    )
+    if subordinate is None:
+        raise PermissionDenied(message)
+
+    subordinate_access_control = normalize_access_control(subordinate.access_control)
+    if subordinate_access_control not in allowed_controls:
+        raise PermissionDenied(message)
+
+    cache_verified_admin_request(request, institute, resolved_admin_key, subordinate=subordinate)
+    return True
+
 
 
 
@@ -20,47 +161,14 @@ class InstituteKeyPermission(BasePermission):
     """
     message = 'Invalid or missing admin key for this institute.'
 
-    def _get_institute_id(self, request):
-        institute_id = request.query_params.get('institute')
-        if not institute_id and hasattr(request, 'data'):
-            institute_id = request.data.get('institute')
-        return institute_id
-
-    def _get_admin_key(self, request):
-        # Accept header (preferred) or query param (fallback)
-        return (
-            request.headers.get('X-Admin-Key')
-            or request.query_params.get('admin_key')
-        )
-
     def has_permission(self, request, view):
-        from iinstitutes_list.models import Institute
-
-        institute_id = self._get_institute_id(request)
-        admin_key = self._get_admin_key(request)
-
-        if not institute_id:
-            raise PermissionDenied('Institute id is required.')
-
-        if not admin_key:
-            raise PermissionDenied('Admin key is required (X-Admin-Key header or admin_key query param).')
-
-        try:
-            institute = Institute.objects.only('id', 'admin_key', 'event_status', 'name').get(pk=institute_id)
-        except Institute.DoesNotExist:
-            raise PermissionDenied('Institute not found.')
-
-        if institute.admin_key != admin_key:
-            raise PermissionDenied(self.message)
-
-        # Block access if the institute's events are paused or stopped
-        if institute.event_status != 'active':
-            raise PermissionDenied(
-                f'Institute events are currently {institute.event_status}. Access denied.'
-            )
-
-        # Cache the verified institute on the request for use by the view
-        request._verified_institute = institute
+        institute = get_verified_institute(request)
+        verify_admin_key_for_institute(
+            request,
+            institute,
+            view=view,
+            message=self.message,
+        )
         return True
 
 
@@ -195,6 +303,146 @@ class StudentPersonalKeyPermission(BasePermission):
         return True
 
 
+class StudentRetrievePermission(BasePermission):
+    """
+    Allows student detail access via either:
+      - X-Admin-Key    header: institute admin/subordinate key
+      - X-Personal-Key header: 15-char student personal ID
+
+    Admin-key access is resolved against the retrieved student's institute, so
+    the client does not need to send ?institute=<id> for detail routes.
+    """
+    message = 'Provide X-Admin-Key or X-Personal-Key (student personal ID).'
+
+    def has_permission(self, request, view):
+        request._student_retrieve_admin_key = get_request_admin_key(request)
+        request._student_retrieve_personal_key = (
+            request.headers.get('X-Personal-Key')
+            or request.query_params.get('personal_key')
+        )
+
+        if not request._student_retrieve_admin_key and not request._student_retrieve_personal_key:
+            raise PermissionDenied(self.message)
+
+        return True
+
+    def has_object_permission(self, request, view, obj):
+        from students.models import Student
+
+        if not isinstance(obj, Student):
+            raise PermissionDenied('Unsupported object type for student detail access.')
+
+        if obj.institute and obj.institute.event_status != 'active':
+            raise PermissionDenied(
+                f'Institute events are currently {obj.institute.event_status}. Access denied.'
+            )
+
+        admin_key = getattr(request, '_student_retrieve_admin_key', None)
+        personal_key = getattr(request, '_student_retrieve_personal_key', None)
+
+        if admin_key:
+            try:
+                verify_admin_key_for_institute(
+                    request,
+                    obj.institute,
+                    view=view,
+                    message='Invalid admin key for this institute.',
+                    admin_key=admin_key,
+                )
+                return True
+            except PermissionDenied:
+                if not personal_key:
+                    raise
+
+        if not personal_key:
+            raise PermissionDenied(self.message)
+
+        if len(personal_key) != 15:
+            raise PermissionDenied('Student personal key must be exactly 15 characters.')
+
+        try:
+            expected_key = obj.system_details.student_personal_id
+        except Exception:
+            raise PermissionDenied('Student system details not found.')
+
+        if personal_key != expected_key:
+            raise PermissionDenied('Invalid or missing student personal key.')
+
+        request._verified_student = obj
+        return True
+
+
+class ProfessorRetrievePermission(BasePermission):
+    """
+    Allows professor detail access via either:
+      - X-Admin-Key    header: institute admin/subordinate key
+      - X-Personal-Key header: professor personal ID
+
+    Admin-key access is resolved against the retrieved professor's institute, so
+    the client does not need to send ?institute=<id> for detail routes.
+    """
+    message = 'Provide X-Admin-Key or X-Personal-Key (professor personal ID).'
+
+    def has_permission(self, request, view):
+        request._professor_retrieve_admin_key = get_request_admin_key(request)
+        request._professor_retrieve_personal_key = (
+            request.headers.get('X-Personal-Key')
+            or request.query_params.get('personal_key')
+        )
+
+        if (
+            not request._professor_retrieve_admin_key
+            and not request._professor_retrieve_personal_key
+        ):
+            raise PermissionDenied(self.message)
+
+        return True
+
+    def has_object_permission(self, request, view, obj):
+        from professors.models import Professor
+
+        if not isinstance(obj, Professor):
+            raise PermissionDenied('Unsupported object type for professor detail access.')
+
+        if obj.institute and obj.institute.event_status != 'active':
+            raise PermissionDenied(
+                f'Institute events are currently {obj.institute.event_status}. Access denied.'
+            )
+
+        admin_key = getattr(request, '_professor_retrieve_admin_key', None)
+        personal_key = getattr(request, '_professor_retrieve_personal_key', None)
+
+        if admin_key:
+            try:
+                verify_admin_key_for_institute(
+                    request,
+                    obj.institute,
+                    view=view,
+                    message='Invalid admin key for this institute.',
+                    admin_key=admin_key,
+                )
+                request._verified_institute = obj.institute
+                return True
+            except PermissionDenied:
+                if not personal_key:
+                    raise
+
+        if not personal_key:
+            raise PermissionDenied(self.message)
+
+        try:
+            expected_key = obj.admin_employement.personal_id
+        except Exception:
+            raise PermissionDenied('Professor admin employment details not found.')
+
+        if personal_key != expected_key:
+            raise PermissionDenied('Invalid or missing professor personal key.')
+
+        request._verified_institute = obj.institute
+        request._verified_professor = obj
+        return True
+
+
 class AttendancePermission(BasePermission):
     """
     Allows access to Attendance endpoints via EITHER:
@@ -207,16 +455,12 @@ class AttendancePermission(BasePermission):
       - request._verified_professor  (only when authenticated via personal key)
     """
 
-    message = 'Invalid or missing key. Provide X-Admin-Key (32 chars) or X-Personal-Key (professor personal ID).'
+    message = 'Invalid or missing key. Provide X-Admin-Key for institute access or X-Personal-Key (professor personal ID).'
 
     def _get_institute_id(self, request):
-        return (
-            request.query_params.get('institute')
-            or (request.data.get('institute') if hasattr(request, 'data') else None)
-        )
+        return get_request_institute_id(request)
 
     def has_permission(self, request, view):
-        from iinstitutes_list.models import Institute
         from professors.models import professorAdminEmployement
 
         admin_key = request.headers.get('X-Admin-Key') or request.query_params.get('admin_key')
@@ -224,30 +468,29 @@ class AttendancePermission(BasePermission):
 
         if not admin_key and not personal_key:
             raise PermissionDenied(
-                'Provide X-Admin-Key (32-char admin key) or X-Personal-Key (professor personal ID).'
+                'Provide X-Admin-Key for institute access or X-Personal-Key (professor personal ID).'
             )
 
         institute_id = self._get_institute_id(request)
         if not institute_id:
             raise PermissionDenied('institute id is required (query param ?institute= or body field).')
 
-        try:
-            institute = Institute.objects.only('id', 'admin_key', 'event_status', 'name').get(pk=institute_id)
-        except Institute.DoesNotExist:
-            raise PermissionDenied('Institute not found.')
-
-        if institute.event_status != 'active':
-            raise PermissionDenied(
-                f'Institute events are currently {institute.event_status}. Access denied.'
-            )
+        institute = get_verified_institute(request)
 
         # --- Try admin key first ---
         if admin_key:
-            if admin_key == institute.admin_key:
-                request._verified_institute = institute
+            try:
+                verify_admin_key_for_institute(
+                    request,
+                    institute,
+                    view=view,
+                    message='Invalid admin key for this institute.',
+                    admin_key=admin_key,
+                )
                 return True
-            if not personal_key:
-                raise PermissionDenied('Invalid admin key for this institute.')
+            except PermissionDenied:
+                if not personal_key:
+                    raise
 
         # --- Try professor personal key ---
         if personal_key:
@@ -285,18 +528,14 @@ class SchedulePermission(BasePermission):
     """
 
     message = (
-        'Provide X-Admin-Key (32-char) or X-Personal-Key '
+        'Provide X-Admin-Key or X-Personal-Key '
         '(professor or student personal ID).'
     )
 
     def _get_institute_id(self, request):
-        return (
-            request.query_params.get('institute')
-            or (request.data.get('institute') if hasattr(request, 'data') else None)
-        )
+        return get_request_institute_id(request)
 
     def has_permission(self, request, view):
-        from iinstitutes_list.models import Institute
         from students.models import StudentSystemDetails
         from professors.models import professorAdminEmployement
 
@@ -310,23 +549,22 @@ class SchedulePermission(BasePermission):
         if not institute_id:
             raise PermissionDenied('institute id is required (?institute= query param or body field).')
 
-        try:
-            institute = Institute.objects.only('id', 'admin_key', 'event_status', 'name').get(pk=institute_id)
-        except Institute.DoesNotExist:
-            raise PermissionDenied('Institute not found.')
-
-        if institute.event_status != 'active':
-            raise PermissionDenied(
-                f'Institute events are currently {institute.event_status}. Access denied.'
-            )
+        institute = get_verified_institute(request)
 
         # ── 1. Admin key ─────────────────────────────────────────────────────
         if admin_key:
-            if admin_key == institute.admin_key:
-                request._verified_institute = institute
+            try:
+                verify_admin_key_for_institute(
+                    request,
+                    institute,
+                    view=view,
+                    message='Invalid admin key for this institute.',
+                    admin_key=admin_key,
+                )
                 return True
-            if not personal_key:
-                raise PermissionDenied('Invalid admin key for this institute.')
+            except PermissionDenied:
+                if not personal_key:
+                    raise
 
         # ── 2. Personal key — try professor first, then student ───────────────
         if personal_key:
@@ -384,16 +622,12 @@ class SubjectAssignmentPermission(BasePermission):
       - request._verified_student  (student key)
     """
 
-    message = 'Provide X-Admin-Key (32-char) or X-Personal-Key (student personal ID).'
+    message = 'Provide X-Admin-Key or X-Personal-Key (student personal ID).'
 
     def _get_institute_id(self, request):
-        return (
-            request.query_params.get('institute')
-            or (request.data.get('institute') if hasattr(request, 'data') else None)
-        )
+        return get_request_institute_id(request)
 
     def has_permission(self, request, view):
-        from iinstitutes_list.models import Institute
         from students.models import StudentSystemDetails
 
         admin_key = request.headers.get('X-Admin-Key') or request.query_params.get('admin_key')
@@ -406,22 +640,21 @@ class SubjectAssignmentPermission(BasePermission):
         if not institute_id:
             raise PermissionDenied('institute id is required (?institute= query param or body field).')
 
-        try:
-            institute = Institute.objects.only('id', 'admin_key', 'event_status', 'name').get(pk=institute_id)
-        except Institute.DoesNotExist:
-            raise PermissionDenied('Institute not found.')
-
-        if institute.event_status != 'active':
-            raise PermissionDenied(
-                f'Institute events are currently {institute.event_status}. Access denied.'
-            )
+        institute = get_verified_institute(request)
 
         if admin_key:
-            if admin_key == institute.admin_key:
-                request._verified_institute = institute
+            try:
+                verify_admin_key_for_institute(
+                    request,
+                    institute,
+                    view=view,
+                    message='Invalid admin key for this institute.',
+                    admin_key=admin_key,
+                )
                 return True
-            if not personal_key:
-                raise PermissionDenied('Invalid admin key for this institute.')
+            except PermissionDenied:
+                if not personal_key:
+                    raise
 
         if personal_key:
             is_read_only = request.method in ('GET', 'HEAD', 'OPTIONS')

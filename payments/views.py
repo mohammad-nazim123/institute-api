@@ -1,11 +1,13 @@
 from collections import OrderedDict
+
+from activity_feed.services import ActivityLogMixin, log_activity
 from django.db import IntegrityError
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from institute_api.mixins import InstituteDictResponseMixin
-from institute_api.permissions import AttendancePermission
+from institute_api.permissions import ADMIN_ACCESS_CONTROL, AttendancePermission
 from .models import ProfessorsPayments
 from .serializers import ProfessorsPaymentsSerializer
 from professors.models import Professor
@@ -26,7 +28,9 @@ def get_payments_queryset(institute=None):
     return queryset
 
 
-class ProfessorsPaymentsViewSet(InstituteDictResponseMixin, ModelViewSet):
+class ProfessorsPaymentsViewSet(ActivityLogMixin, InstituteDictResponseMixin, ModelViewSet):
+    activity_entity_type = 'professor payment'
+    activity_name_field = 'month_year'
     """
     Standard CRUD for professor payments.
     All endpoints require ?institute=<id>&admin_key=<key>
@@ -34,6 +38,7 @@ class ProfessorsPaymentsViewSet(InstituteDictResponseMixin, ModelViewSet):
     serializer_class = ProfessorsPaymentsSerializer
     entity_key = 'professors_payments'
     permission_classes = [AttendancePermission]
+    allowed_subordinate_access_controls = (ADMIN_ACCESS_CONTROL,)
 
     def get_queryset(self):
         return get_payments_queryset(getattr(self.request, '_verified_institute', None))
@@ -73,7 +78,8 @@ class ProfessorsPaymentsViewSet(InstituteDictResponseMixin, ModelViewSet):
         institute = request._verified_institute
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        payment = serializer.save()
+        self.perform_create(serializer)
+        payment = serializer.instance
         return Response(
             self._build_verified_institute_response(
                 institute,
@@ -88,7 +94,8 @@ class ProfessorsPaymentsViewSet(InstituteDictResponseMixin, ModelViewSet):
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        payment = serializer.save()
+        self.perform_update(serializer)
+        payment = serializer.instance
         return Response(
             self._build_verified_institute_response(
                 institute,
@@ -118,6 +125,7 @@ class ProfessorPaymentUpsertView(APIView):
     Returns the created/updated payment record wrapped in institute dict.
     """
     permission_classes = [AttendancePermission]
+    allowed_subordinate_access_controls = (ADMIN_ACCESS_CONTROL,)
 
     @staticmethod
     def _payment_payload(payment_id, institute_id, professor_id, month_year, fields):
@@ -168,6 +176,15 @@ class ProfessorPaymentUpsertView(APIView):
             payment_fields.update(updates)
             if updates:
                 ProfessorsPayments.objects.filter(pk=payment['id']).update(**updates)
+                log_activity(
+                    request,
+                    action='update',
+                    entity_type='professor payment',
+                    entity_id=payment['id'],
+                    entity_name=month_year,
+                    description=f"Professor payment for {month_year} was updated.",
+                    details={'professor_id': professor_id, 'month_year': month_year, 'fields': sorted(updates.keys())},
+                )
             return Response(
                 self._payment_payload(
                     payment['id'],
@@ -213,6 +230,15 @@ class ProfessorPaymentUpsertView(APIView):
             payment_fields.update(updates)
             if updates:
                 ProfessorsPayments.objects.filter(pk=payment['id']).update(**updates)
+                log_activity(
+                    request,
+                    action='update',
+                    entity_type='professor payment',
+                    entity_id=payment['id'],
+                    entity_name=month_year,
+                    description=f"Professor payment for {month_year} was updated.",
+                    details={'professor_id': professor_id, 'month_year': month_year, 'fields': sorted(updates.keys())},
+                )
             return Response(
                 self._payment_payload(
                     payment['id'],
@@ -223,6 +249,16 @@ class ProfessorPaymentUpsertView(APIView):
                 ),
                 status=status.HTTP_200_OK,
             )
+
+        log_activity(
+            request,
+            action='create',
+            entity_type='professor payment',
+            entity_id=payment.id,
+            entity_name=month_year,
+            description=f"Professor payment for {month_year} was created.",
+            details={'professor_id': professor_id, 'month_year': month_year, 'fields': sorted(updates.keys())},
+        )
 
         return Response(
             self._payment_payload(

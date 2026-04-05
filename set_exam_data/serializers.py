@@ -34,7 +34,7 @@ class ExamDictionarySerializer(serializers.Serializer):
     }
     """
     institute_id = serializers.IntegerField(source='institute.id', read_only=True)
-    institute = serializers.CharField(source='institute.name', read_only=True)
+    institute = serializers.CharField(source='institute.institute_name', read_only=True)
     class_name = serializers.CharField(read_only=True)
     branch = serializers.CharField(read_only=True)
     academic_term = serializers.CharField(read_only=True)
@@ -45,7 +45,7 @@ class ExamDictionarySerializer(serializers.Serializer):
           { 'institute': <Institute>, 'class_name', 'branch', 'academic_term', 'exam_data': queryset }
         """
         return {
-            'institute': data['institute'].name,
+            'institute': data['institute'].institute_name,
             'institute_id': data['institute'].id,
             'class': data['class_name'],
             'branch': data['branch'],

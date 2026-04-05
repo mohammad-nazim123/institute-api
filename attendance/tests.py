@@ -156,3 +156,73 @@ class AttendanceStudentListViewTests(TestCase):
                 'category': 'OBC',
             }],
         )
+
+
+class AttendanceStudentSummaryViewTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.institute = Institute.objects.create(
+            name='Attendance Summary Institute',
+            admin_key='g' * 32,
+            event_status='active',
+        )
+        self.headers = {
+            'HTTP_X_ADMIN_KEY': self.institute.admin_key,
+        }
+
+        self.student_one = Student.objects.create(
+            institute=self.institute,
+            name='Summary Student One',
+            gender='Female',
+            category='General',
+        )
+        self.student_two = Student.objects.create(
+            institute=self.institute,
+            name='Summary Student Two',
+            gender='Male',
+            category='OBC',
+        )
+
+        Attendance.objects.create(
+            student=self.student_one,
+            date=date(2026, 3, 5),
+            status=True,
+        )
+        Attendance.objects.create(
+            student=self.student_one,
+            date=date(2026, 3, 6),
+            status=False,
+        )
+        Attendance.objects.create(
+            student=self.student_one,
+            date=date(2026, 4, 1),
+            status=True,
+        )
+
+    def test_student_attendance_summary_returns_monthly_counts_without_daily_records(self):
+        response = self.client.get(
+            f'/attendance/attendance/students/summary/?institute={self.institute.id}'
+            f'&month=2026-03&student_ids={self.student_one.id},{self.student_two.id}',
+            **self.headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data,
+            [
+                {
+                    'student_id': self.student_one.id,
+                    'present': 1,
+                    'absent': 1,
+                    'total': 2,
+                    'percentage': 50,
+                },
+                {
+                    'student_id': self.student_two.id,
+                    'present': 0,
+                    'absent': 0,
+                    'total': 0,
+                    'percentage': 0,
+                },
+            ],
+        )

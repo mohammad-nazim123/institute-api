@@ -4,6 +4,7 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from activity_feed.models import ActivityEvent
 from iinstitutes_list.models import Institute
 from professors.models import (
     Professor,
@@ -45,6 +46,26 @@ class ProfessorAttendanceApiTests(TestCase):
             professor=self.professor,
             personal_id='PROF-1',
             employee_id='EMP-1',
+        )
+
+        self.second_professor = Professor.objects.create(
+            institute=self.institute,
+            name='Dr Alice',
+            email='alice@example.com',
+            phone_number='7777777777',
+        )
+        ProfessorExperience.objects.create(
+            professor=self.second_professor,
+            department='Mathematics',
+        )
+        ProfessorQualification.objects.create(
+            professor=self.second_professor,
+            specialization='Applied Mathematics',
+        )
+        professorAdminEmployement.objects.create(
+            professor=self.second_professor,
+            personal_id='PROF-3',
+            employee_id='EMP-3',
         )
 
         self.other_professor = Professor.objects.create(
@@ -103,6 +124,15 @@ class ProfessorAttendanceApiTests(TestCase):
         self.assertNotIn('present_time', response.data)
         self.assertNotIn('absent_time', response.data)
 
+        activity = ActivityEvent.objects.get(
+            institute=self.institute,
+            entity_type='professor attendance',
+            action='create',
+            entity_id=response.data['id'],
+        )
+        self.assertEqual(activity.entity_name, 'Dr Bob')
+        self.assertIsNotNone(activity.occurred_at)
+
     def test_professor_attendance_rejects_professor_from_other_institute(self):
         response = self.client.post(
             f'/professor_attendance/attendance/?institute={self.institute.id}',
@@ -117,6 +147,31 @@ class ProfessorAttendanceApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('professor', response.data)
+
+    def test_duplicate_professor_attendance_returns_clear_message(self):
+        ProfessorAttendance.objects.create(
+            institute=self.institute,
+            professor=self.professor,
+            date=date(2026, 3, 19),
+            status=True,
+        )
+
+        response = self.client.post(
+            f'/professor_attendance/attendance/?institute={self.institute.id}',
+            data={
+                'professor': self.professor.id,
+                'date': '2026-03-19',
+                'status': False,
+            },
+            format='json',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data['non_field_errors'][0],
+            'Attendance already exists for this professor on this date.',
+        )
 
     def test_create_professor_leave_returns_professor_details(self):
         response = self.client.post(
@@ -162,6 +217,87 @@ class ProfessorAttendanceApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]['status'], 'approved')
+
+    def test_professor_leave_list_filters_by_professor_id_and_month_year(self):
+        ProfessorLeave.objects.create(
+            institute=self.institute,
+            professor=self.professor,
+            date=date(2026, 3, 21),
+            comment='Conference',
+            status=ProfessorLeave.STATUS_APPROVED,
+        )
+        ProfessorLeave.objects.create(
+            institute=self.institute,
+            professor=self.professor,
+            date=date(2026, 4, 2),
+            comment='Medical',
+            status=ProfessorLeave.STATUS_APPROVED,
+        )
+        ProfessorLeave.objects.create(
+            institute=self.institute,
+            professor=self.second_professor,
+            date=date(2026, 3, 23),
+            comment='Workshop',
+            status=ProfessorLeave.STATUS_REJECT,
+        )
+
+        response = self.client.get(
+            f'/professor_attendance/leaves/?institute={self.institute.id}'
+            f'&professor_id={self.professor.id}&month=3&year=2026',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['professor'], self.professor.id)
+        self.assertEqual(response.data[0]['professor_name'], 'Dr Bob')
+        self.assertEqual(response.data[0]['date'], '2026-03-21')
+
+    def test_professor_leave_list_filters_by_professor_id_and_compact_month(self):
+        ProfessorLeave.objects.create(
+            institute=self.institute,
+            professor=self.professor,
+            date=date(2026, 3, 25),
+            comment='Exam duty',
+            status=ProfessorLeave.STATUS_APPROVED,
+        )
+
+        response = self.client.get(
+            f'/professor_attendance/leaves/?institute={self.institute.id}'
+            f'&professor_id={self.professor.id}&month=2026-03',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['date'], '2026-03-25')
+
+    def test_duplicate_professor_leave_returns_clear_message(self):
+        ProfessorLeave.objects.create(
+            institute=self.institute,
+            professor=self.professor,
+            date=date(2026, 3, 20),
+            comment='Existing leave',
+            status=ProfessorLeave.STATUS_APPROVED,
+        )
+
+        response = self.client.post(
+            f'/professor_attendance/leaves/?institute={self.institute.id}',
+            data={
+                'professor': self.professor.id,
+                'date': '2026-03-20',
+                'comment': 'Medical leave',
+                'status': 'reject',
+            },
+            format='json',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data['non_field_errors'][0],
+            'Leave already exists for this professor on this date.',
+        )
 
     def test_professor_attendance_list_filters_by_professor(self):
         ProfessorAttendance.objects.create(

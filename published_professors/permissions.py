@@ -1,9 +1,15 @@
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
+from institute_api.permissions import (
+    ADMIN_ACCESS_CONTROL,
+    get_verified_institute,
+    verify_admin_key_for_institute,
+)
+
 
 class PublishedProfessorAdminKeyPermission(BasePermission):
-    message = 'Provide X-Admin-Key with exactly 32 characters.'
+    message = 'Provide a valid X-Admin-Key for this institute.'
 
     def _get_institute_id(self, request):
         return (
@@ -12,33 +18,14 @@ class PublishedProfessorAdminKeyPermission(BasePermission):
         )
 
     def has_permission(self, request, view):
-        from iinstitutes_list.models import Institute
-
-        institute_id = self._get_institute_id(request)
-        if not institute_id:
-            raise PermissionDenied('institute id is required (?institute= query param or body field).')
-
-        admin_key = request.headers.get('X-Admin-Key')
-        if not admin_key:
-            raise PermissionDenied('X-Admin-Key header is required.')
-        if len(admin_key) != 32:
-            raise PermissionDenied(self.message)
-
-        try:
-            institute = Institute.objects.only('id', 'name', 'admin_key', 'event_status').get(pk=institute_id)
-        except Institute.DoesNotExist:
-            raise PermissionDenied('Institute not found.')
-
-        if institute.event_status != 'active':
-            raise PermissionDenied(
-                f'Institute events are currently {institute.event_status}. Access denied.'
-            )
-
-        if institute.admin_key != admin_key:
-            raise PermissionDenied('Invalid admin key for this institute.')
-
-        request._verified_institute = institute
-        request._admin_key = admin_key
+        institute = get_verified_institute(request)
+        verify_admin_key_for_institute(
+            request,
+            institute,
+            view=view,
+            message='Invalid admin key for this institute.',
+            allowed_subordinate_access_controls=(ADMIN_ACCESS_CONTROL,),
+        )
         return True
 
 
@@ -65,7 +52,7 @@ class PublishedProfessorPersonalKeyPermission(BasePermission):
             raise PermissionDenied(self.message)
 
         try:
-            institute = Institute.objects.only('id', 'name', 'event_status').get(pk=institute_id)
+            institute = Institute.objects.only('id', 'institute_name', 'event_status').get(pk=institute_id)
         except Institute.DoesNotExist:
             raise PermissionDenied('Institute not found.')
 

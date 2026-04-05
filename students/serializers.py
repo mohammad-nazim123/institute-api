@@ -2,6 +2,7 @@ from rest_framework.serializers import ModelSerializer
 from rest_framework import serializers
 from .models import Student, StudentEducationDetails, StudentContactDetails, StudentAdmissionDetails, StudentCourseAssignment, StudentFeeDetails, StudentSystemDetails, SubjectsAssigned
 from django.db import transaction
+from iinstitutes_list.academic_terms import canonicalize_institute_academic_term
 from iinstitutes_list.models import Institute
 from institute_api.mixins import OptionalAndBlankMixin
 
@@ -97,7 +98,26 @@ class StudentSerializer(OptionalAndBlankMixin, ModelSerializer):
         model = Student
         fields = '__all__'
 
+    def _normalize_course_assignments_data(self, validated_data):
+        course_assignments_data = validated_data.get('course_assignments')
+        if not course_assignments_data:
+            return validated_data
+
+        institute = validated_data.get('institute') or getattr(self.instance, 'institute', None)
+        if institute is None:
+            return validated_data
+
+        normalized_course_assignments_data = dict(course_assignments_data)
+        if 'academic_term' in normalized_course_assignments_data:
+            normalized_course_assignments_data['academic_term'] = canonicalize_institute_academic_term(
+                institute,
+                normalized_course_assignments_data.get('academic_term', ''),
+            )
+        validated_data['course_assignments'] = normalized_course_assignments_data
+        return validated_data
+
     def create(self, validated_data):
+        validated_data = self._normalize_course_assignments_data(validated_data)
         education_details_data = validated_data.pop('education_details', None)
         contact_details_data = validated_data.pop('contact_details', None)
         admission_details_data = validated_data.pop('admission_details', None)
@@ -144,6 +164,7 @@ class StudentSerializer(OptionalAndBlankMixin, ModelSerializer):
         return attrs
 
     def update(self, instance, validated_data):
+        validated_data = self._normalize_course_assignments_data(validated_data)
         education_details_data = validated_data.pop('education_details', None)
         contact_details_data = validated_data.pop('contact_details', None)
         admission_details_data = validated_data.pop('admission_details', None)
@@ -229,7 +250,7 @@ class StudentIdLookUpSerializer(serializers.Serializer):
 
         # Resolve institute
         try:
-            institute = Institute.objects.get(name=institute_name)
+            institute = Institute.objects.get(institute_name=institute_name)
         except Institute.DoesNotExist:
             raise serializers.ValidationError("Institute not found.")
 

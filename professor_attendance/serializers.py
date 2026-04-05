@@ -59,6 +59,7 @@ class ProfessorAttendanceSerializer(serializers.ModelSerializer):
             'status',
             'attendance_time',
         ]
+        validators = []
 
     def get_department(self, obj):
         experience = getattr(obj.professor, 'experience', None)
@@ -127,6 +128,7 @@ class ProfessorLeaveSerializer(serializers.ModelSerializer):
             'comment',
             'status',
         ]
+        validators = []
 
     def get_department(self, obj):
         experience = getattr(obj.professor, 'experience', None)
