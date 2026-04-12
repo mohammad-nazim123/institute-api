@@ -24,6 +24,10 @@ class InstituteTotalLeaveAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'institute',
+        'session_start_month',
+        'session_end_month',
+        'opening_time',
+        'closing_time',
         'total_leaves',
     )
     search_fields = ('institute__name',)

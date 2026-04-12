@@ -181,9 +181,35 @@ class ProfessorLeaveSerializer(serializers.ModelSerializer):
         return instance
 
 
+SESSION_MONTH_LABELS = {
+    1: 'Jan',
+    2: 'Feb',
+    3: 'Mar',
+    4: 'Apr',
+    5: 'May',
+    6: 'Jun',
+    7: 'Jul',
+    8: 'Aug',
+    9: 'Sep',
+    10: 'Oct',
+    11: 'Nov',
+    12: 'Dec',
+}
+
+
+def build_session_label(start_month, end_month):
+    return f"{SESSION_MONTH_LABELS.get(start_month, 'Month')}-{SESSION_MONTH_LABELS.get(end_month, 'Month')}"
+
+
 class InstituteTotalLeaveSerializer(serializers.ModelSerializer):
     institute_name = serializers.CharField(source='institute.name', read_only=True)
-    total_leaves = serializers.IntegerField(min_value=0)
+    total_leaves = serializers.IntegerField(min_value=0, required=False)
+    employee_yearly_leaves = serializers.SerializerMethodField(read_only=True)
+    session_start_month = serializers.IntegerField(min_value=1, max_value=12, required=False)
+    session_end_month = serializers.IntegerField(min_value=1, max_value=12, required=False)
+    opening_time = serializers.TimeField(required=False)
+    closing_time = serializers.TimeField(required=False)
+    session_label = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = InstituteTotalLeave
@@ -192,9 +218,33 @@ class InstituteTotalLeaveSerializer(serializers.ModelSerializer):
             'institute',
             'institute_name',
             'total_leaves',
+            'employee_yearly_leaves',
+            'session_start_month',
+            'session_end_month',
+            'opening_time',
+            'closing_time',
+            'session_label',
         ]
-        read_only_fields = ('id', 'institute', 'institute_name')
+        read_only_fields = (
+            'id',
+            'institute',
+            'institute_name',
+            'employee_yearly_leaves',
+            'session_label',
+        )
         validators = []
+
+    def to_internal_value(self, data):
+        mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
+        if 'total_leaves' not in mutable_data and 'employee_yearly_leaves' in mutable_data:
+            mutable_data['total_leaves'] = mutable_data['employee_yearly_leaves']
+        return super().to_internal_value(mutable_data)
+
+    def get_employee_yearly_leaves(self, instance):
+        return instance.total_leaves
+
+    def get_session_label(self, instance):
+        return build_session_label(instance.session_start_month, instance.session_end_month)
 
     def validate(self, attrs):
         institute = self.context['institute']
@@ -204,6 +254,17 @@ class InstituteTotalLeaveSerializer(serializers.ModelSerializer):
         if queryset.exists():
             raise serializers.ValidationError(
                 'Total leaves setting already exists for this institute.'
+            )
+
+        opening_time = attrs.get('opening_time', getattr(self.instance, 'opening_time', None))
+        closing_time = attrs.get('closing_time', getattr(self.instance, 'closing_time', None))
+        if (
+            opening_time is not None
+            and closing_time is not None
+            and closing_time <= opening_time
+        ):
+            raise serializers.ValidationError(
+                {'closing_time': ['closing_time must be later than opening_time.']}
             )
         return attrs
 

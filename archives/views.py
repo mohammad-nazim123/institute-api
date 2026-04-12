@@ -193,6 +193,7 @@ def build_student_snapshot(student):
             'enrollment_number': admission.enrollment_number if admission else '',
             'roll_number': admission.roll_number if admission else '',
             'admission_date': serialize_date(admission.admission_date) if admission else None,
+            'start_class_date': serialize_date(admission.start_class_date) if admission else None,
             'academic_year': admission.academic_year if admission else '',
         } if admission else None,
         'course_assignment': {

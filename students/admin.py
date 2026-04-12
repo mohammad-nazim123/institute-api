@@ -27,7 +27,15 @@ class StudentEducationDetailsAdmin(admin.ModelAdmin):
 
 @admin.register(StudentAdmissionDetails)
 class StudentAdmissionDetailsAdmin(admin.ModelAdmin):
-    list_display = ('id', 'student', 'enrollment_number', 'roll_number', 'admission_date', 'academic_year')
+    list_display = (
+        'id',
+        'student',
+        'enrollment_number',
+        'roll_number',
+        'admission_date',
+        'start_class_date',
+        'academic_year',
+    )
     search_fields = ('student__name', 'enrollment_number', 'roll_number')
 
 

@@ -45,6 +45,7 @@ STUDENT_ONLY_FIELDS = (
     'admission_details__enrollment_number',
     'admission_details__roll_number',
     'admission_details__admission_date',
+    'admission_details__start_class_date',
     'admission_details__academic_year',
     'course_assignments__class_name',
     'course_assignments__branch',
@@ -164,6 +165,7 @@ def build_student_snapshot(student):
             'enrollment_number': admission.enrollment_number if admission else '',
             'roll_number': admission.roll_number if admission else '',
             'admission_date': serialize_date(admission.admission_date) if admission else None,
+            'start_class_date': serialize_date(admission.start_class_date) if admission else None,
             'academic_year': admission.academic_year if admission else '',
         },
         'course_assignment': {

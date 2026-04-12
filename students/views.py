@@ -57,6 +57,7 @@ STUDENT_LIST_VALUE_FIELDS = (
     'admission_details__enrollment_number',
     'admission_details__roll_number',
     'admission_details__admission_date',
+    'admission_details__start_class_date',
     'admission_details__academic_year',
     'course_assignments__class_name',
     'course_assignments__branch',
@@ -117,8 +118,14 @@ def build_student_list_payload(row):
         'admission_details': _build_related_payload(
             row,
             'admission_details',
-            ('enrollment_number', 'roll_number', 'admission_date', 'academic_year'),
-            date_fields=('admission_date',),
+            (
+                'enrollment_number',
+                'roll_number',
+                'admission_date',
+                'start_class_date',
+                'academic_year',
+            ),
+            date_fields=('admission_date', 'start_class_date'),
         ),
         'course_assignment': _build_related_payload(
             row,

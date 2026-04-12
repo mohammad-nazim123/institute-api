@@ -63,7 +63,8 @@ class PublishedStudentApiTests(TestCase):
             student=student,
             enrollment_number='ENR-1',
             roll_number='ROLL-1',
-            academic_year='2026',
+            start_class_date='2026-04-01',
+            academic_year='2026-2027',
         )
         StudentCourseAssignment.objects.create(
             student=student,
@@ -106,6 +107,14 @@ class PublishedStudentApiTests(TestCase):
         published = response.data['published_students'][0]
         self.assertEqual(published['student_id'], self.student.id)
         self.assertEqual(published['student_data']['course_assignment']['branch'], 'CS')
+        self.assertEqual(
+            published['student_data']['admission_details']['start_class_date'],
+            '2026-04-01',
+        )
+        self.assertEqual(
+            published['student_data']['admission_details']['academic_year'],
+            '2026-2027',
+        )
         self.assertEqual(len(published['subjects_assigned']), 2)
         self.assertNotIn('published_key', published)
 

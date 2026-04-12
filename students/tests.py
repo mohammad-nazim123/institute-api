@@ -7,7 +7,13 @@ from rest_framework.test import APITestCase
 from activity_feed.models import ActivityEvent
 from iinstitutes_list.models import Institute
 
-from .models import Student, StudentCourseAssignment, StudentSystemDetails, SubjectsAssigned
+from .models import (
+    Student,
+    StudentAdmissionDetails,
+    StudentCourseAssignment,
+    StudentSystemDetails,
+    SubjectsAssigned,
+)
 
 
 class StudentPatchResponseTests(APITestCase):
@@ -37,6 +43,27 @@ class StudentPatchResponseTests(APITestCase):
         self.assertEqual(len(response.data['students']), 1)
         self.assertEqual(response.data['students'][0]['id'], self.student.id)
         self.assertEqual(response.data['students'][0]['identity'], '5456677889988')
+
+    def test_patch_updates_start_class_date_in_admission_details(self):
+        StudentAdmissionDetails.objects.create(student=self.student)
+
+        response = self.client.patch(
+            f"{reverse('students-detail', args=[self.student.id])}?institute={self.institute.id}",
+            {
+                'admission_details': {
+                    'start_class_date': '2026-04-01',
+                    'academic_year': '2026-2027',
+                },
+            },
+            format='json',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        admission_details = self.student.admission_details
+        admission_details.refresh_from_db()
+        self.assertEqual(admission_details.start_class_date.isoformat(), '2026-04-01')
+        self.assertEqual(admission_details.academic_year, '2026-2027')
 
 
 class StudentPermissionTests(APITestCase):

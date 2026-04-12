@@ -40,4 +40,5 @@ urlpatterns = [
     path('professor_leaves/', include('professor_leaves.urls')),
     path('subordinate_access/', include('subordinate_access.urls')),
     path('activity_feed/', include('activity_feed.urls')),
+    path('default_activities/', include('default_activities.urls')),
 ]

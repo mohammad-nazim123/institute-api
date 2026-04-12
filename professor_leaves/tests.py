@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, time
 
 from django.test import TestCase
 from rest_framework import status
@@ -7,6 +7,7 @@ from rest_framework.test import APIClient
 from iinstitutes_list.models import Institute
 from professors.models import Professor, ProfessorExperience, professorAdminEmployement
 from published_professors.models import PublishedProfessor
+from subordinate_access.models import SubordinateAccess
 
 from .models import InstituteTotalLeave, ProfessorLeave
 
@@ -110,6 +111,38 @@ class ProfessorLeavesBaseTestCase(TestCase):
                     'department': 'ECE',
                 },
             },
+        )
+        self.subordinate_access_32 = SubordinateAccess.objects.create(
+            institute=self.institute,
+            post='Coordinator',
+            name='Maya',
+            access_control='admin access',
+            access_code='M' * 32,
+            is_active=True,
+        )
+        self.subordinate_access_31 = SubordinateAccess.objects.create(
+            institute=self.institute,
+            post='Coordinator',
+            name='Nina',
+            access_control='admin access',
+            access_code='N' * 31,
+            is_active=True,
+        )
+        self.subordinate_access_30 = SubordinateAccess.objects.create(
+            institute=self.institute,
+            post='Coordinator',
+            name='Omar',
+            access_control='admin access',
+            access_code='O' * 30,
+            is_active=True,
+        )
+        self.subordinate_access_29 = SubordinateAccess.objects.create(
+            institute=self.institute,
+            post='Coordinator',
+            name='Pia',
+            access_control='admin access',
+            access_code='P' * 29,
+            is_active=True,
         )
 
 
@@ -517,6 +550,39 @@ class InstituteTotalLeavesApiTests(ProfessorLeavesBaseTestCase):
         self.assertEqual(response.data['institute_name'], 'Alpha Institute')
         self.assertEqual(response.data['total_leaves'], 12)
 
+    def test_admin_can_create_institute_total_leaves_with_session_defaults(self):
+        response = self.client.post(
+            f'/professor_leaves/total-leaves/?institute={self.institute.id}',
+            data={
+                'employee_yearly_leaves': 15,
+                'session_start_month': 4,
+                'session_end_month': 3,
+                'opening_time': '08:30',
+                'closing_time': '18:15',
+            },
+            format='json',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['total_leaves'], 15)
+        self.assertEqual(response.data['employee_yearly_leaves'], 15)
+        self.assertEqual(response.data['session_start_month'], 4)
+        self.assertEqual(response.data['session_end_month'], 3)
+        self.assertEqual(response.data['session_label'], 'Apr-Mar')
+        self.assertEqual(response.data['opening_time'], '08:30:00')
+        self.assertEqual(response.data['closing_time'], '18:15:00')
+
+    def test_admin_cannot_create_institute_total_leaves_with_invalid_time_range(self):
+        response = self.client.post(
+            f'/professor_leaves/total-leaves/?institute={self.institute.id}',
+            data={'total_leaves': 12, 'opening_time': '18:00', 'closing_time': '08:00'},
+            format='json',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('closing_time', response.data)
+
     def test_admin_cannot_create_duplicate_institute_total_leaves(self):
         InstituteTotalLeave.objects.create(
             institute=self.institute,
@@ -563,12 +629,20 @@ class InstituteTotalLeavesApiTests(ProfessorLeavesBaseTestCase):
         setting = InstituteTotalLeave.objects.create(
             institute=self.institute,
             total_leaves=8,
+            session_start_month=1,
+            session_end_month=12,
+            opening_time=time(9, 0),
+            closing_time=time(17, 0),
         )
 
         patch_response = self.client.patch(
             f'/professor_leaves/total-leaves/{setting.id}/?institute={self.institute.id}',
             data={
                 'total_leaves': 18,
+                'session_start_month': 4,
+                'session_end_month': 3,
+                'opening_time': '08:00',
+                'closing_time': '18:00',
             },
             format='json',
             HTTP_X_ADMIN_KEY=self.institute.admin_key,
@@ -576,6 +650,10 @@ class InstituteTotalLeavesApiTests(ProfessorLeavesBaseTestCase):
 
         self.assertEqual(patch_response.status_code, status.HTTP_200_OK)
         self.assertEqual(patch_response.data['total_leaves'], 18)
+        self.assertEqual(patch_response.data['employee_yearly_leaves'], 18)
+        self.assertEqual(patch_response.data['session_label'], 'Apr-Mar')
+        self.assertEqual(patch_response.data['opening_time'], '08:00:00')
+        self.assertEqual(patch_response.data['closing_time'], '18:00:00')
 
         delete_response = self.client.delete(
             f'/professor_leaves/total-leaves/{setting.id}/?institute={self.institute.id}',
@@ -585,7 +663,7 @@ class InstituteTotalLeavesApiTests(ProfessorLeavesBaseTestCase):
         self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(InstituteTotalLeave.objects.filter(id=setting.id).exists())
 
-    def test_personal_key_can_create_institute_total_leaves(self):
+    def test_personal_key_cannot_create_institute_total_leaves(self):
         response = self.client.post(
             f'/professor_leaves/total-leaves/?institute={self.institute.id}',
             data={'total_leaves': 20},
@@ -593,11 +671,9 @@ class InstituteTotalLeavesApiTests(ProfessorLeavesBaseTestCase):
             HTTP_X_PERSONAL_KEY='PROF00000000001',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['institute'], self.institute.id)
-        self.assertEqual(response.data['total_leaves'], 20)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_personal_key_can_read_update_and_delete_institute_total_leaves(self):
+    def test_personal_key_can_read_institute_total_leaves(self):
         setting = InstituteTotalLeave.objects.create(
             institute=self.institute,
             total_leaves=16,
@@ -618,21 +694,91 @@ class InstituteTotalLeavesApiTests(ProfessorLeavesBaseTestCase):
         self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
         self.assertEqual(detail_response.data['total_leaves'], 16)
 
+    def test_personal_key_cannot_update_or_delete_institute_total_leaves(self):
+        setting = InstituteTotalLeave.objects.create(
+            institute=self.institute,
+            total_leaves=16,
+        )
+
         patch_response = self.client.patch(
             f'/professor_leaves/total-leaves/{setting.id}/?institute={self.institute.id}',
             data={'total_leaves': 20},
             format='json',
             HTTP_X_PERSONAL_KEY='PROF00000000001',
         )
-        self.assertEqual(patch_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(patch_response.data['total_leaves'], 20)
+        self.assertEqual(patch_response.status_code, status.HTTP_403_FORBIDDEN)
 
         delete_response = self.client.delete(
             f'/professor_leaves/total-leaves/{setting.id}/?institute={self.institute.id}',
             HTTP_X_PERSONAL_KEY='PROF00000000001',
         )
-        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertFalse(InstituteTotalLeave.objects.filter(id=setting.id).exists())
+        self.assertEqual(delete_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(InstituteTotalLeave.objects.filter(id=setting.id).exists())
+
+    def test_subordinate_admin_access_keys_can_read_institute_total_leaves(self):
+        setting = InstituteTotalLeave.objects.create(
+            institute=self.institute,
+            total_leaves=21,
+        )
+
+        for access_code in (
+            self.subordinate_access_32.access_code,
+            self.subordinate_access_31.access_code,
+            self.subordinate_access_30.access_code,
+            self.subordinate_access_29.access_code,
+        ):
+            with self.subTest(access_code_length=len(access_code)):
+                list_response = self.client.get(
+                    f'/professor_leaves/total-leaves/?institute={self.institute.id}',
+                    HTTP_X_ADMIN_KEY=access_code,
+                )
+                self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+                self.assertEqual(len(list_response.data), 1)
+                self.assertEqual(list_response.data[0]['total_leaves'], 21)
+
+                detail_response = self.client.get(
+                    f'/professor_leaves/total-leaves/{setting.id}/?institute={self.institute.id}',
+                    HTTP_X_ADMIN_KEY=access_code,
+                )
+                self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+                self.assertEqual(detail_response.data['total_leaves'], 21)
+
+    def test_subordinate_admin_access_keys_cannot_write_institute_total_leaves(self):
+        setting = InstituteTotalLeave.objects.create(
+            institute=self.institute,
+            total_leaves=9,
+        )
+
+        for access_code in (
+            self.subordinate_access_32.access_code,
+            self.subordinate_access_31.access_code,
+            self.subordinate_access_30.access_code,
+            self.subordinate_access_29.access_code,
+        ):
+            with self.subTest(access_code_length=len(access_code)):
+                create_response = self.client.post(
+                    f'/professor_leaves/total-leaves/?institute={self.institute.id}',
+                    data={'total_leaves': 20},
+                    format='json',
+                    HTTP_X_ADMIN_KEY=access_code,
+                )
+                self.assertEqual(create_response.status_code, status.HTTP_403_FORBIDDEN)
+
+                patch_response = self.client.patch(
+                    f'/professor_leaves/total-leaves/{setting.id}/?institute={self.institute.id}',
+                    data={'total_leaves': 20},
+                    format='json',
+                    HTTP_X_ADMIN_KEY=access_code,
+                )
+                self.assertEqual(patch_response.status_code, status.HTTP_403_FORBIDDEN)
+
+                delete_response = self.client.delete(
+                    f'/professor_leaves/total-leaves/{setting.id}/?institute={self.institute.id}',
+                    HTTP_X_ADMIN_KEY=access_code,
+                )
+                self.assertEqual(delete_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.assertTrue(InstituteTotalLeave.objects.filter(id=setting.id).exists())
 
     def test_institute_total_leaves_is_shared_for_existing_and_new_professors(self):
         InstituteTotalLeave.objects.create(

@@ -1,3 +1,5 @@
+from datetime import time
+
 from django.db import models
 from django.utils import timezone
 
@@ -72,6 +74,10 @@ class InstituteTotalLeave(models.Model):
         related_name='professor_total_leave_setting',
     )
     total_leaves = models.PositiveIntegerField(default=0)
+    session_start_month = models.PositiveSmallIntegerField(default=4)
+    session_end_month = models.PositiveSmallIntegerField(default=3)
+    opening_time = models.TimeField(default=time(8, 0))
+    closing_time = models.TimeField(default=time(18, 0))
 
     def __str__(self):
         return f'{self.institute_id} - {self.total_leaves}'

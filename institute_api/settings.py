@@ -32,7 +32,7 @@ SECRET_KEY = 'django-insecure-_u%h!_q2l_l42cg#q@h3ocx=!r3=#v!icu*arh4na-zxls9sdq
 # DEBUG = False
 DEBUG = True
 
-ALLOWED_HOSTS = ['*','localhost', '127.0.0.1', '.amazonaws.com','vrevk5vzamhsllkypsfme4y2p40uejdg.lambda-url.ap-southeast-2.on.aws']
+ALLOWED_HOSTS = ['*','localhost', '127.0.0.1', '.amazonaws.com','main.d3e0ptm41k0biu.amplifyapp.com']
 APPEND_SLASH = False
 
 from datetime import timedelta
@@ -84,6 +84,7 @@ INSTALLED_APPS = [
     'subordinate_access',
     'archives',
     'activity_feed',
+    'default_activities',
 ]
 
 
@@ -104,8 +105,9 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
-    "http://3.110.173.121:5173",
-    "https://main.d3e0ptm41k0biu.amplifyapp.com"
+    "https://main.d3e0ptm41k0biu.amplifyapp.com",
+    "https://educonnectz.in",
+    "https://www.educonnectz.in",
 ]
 
 from corsheaders.defaults import default_headers

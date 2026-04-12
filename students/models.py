@@ -58,7 +58,8 @@ class StudentAdmissionDetails(models.Model):
     enrollment_number = models.CharField(max_length=50, default="")
     roll_number = models.CharField(max_length=50, default="")
     admission_date = models.DateField(null=True, blank=True)
-    academic_year = models.CharField(max_length=20, default="")
+    start_class_date = models.DateField(null=True, blank=True)
+    academic_year = models.CharField(max_length=40, default="")
 
     class Meta:
         indexes = [
