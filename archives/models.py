@@ -26,7 +26,6 @@ class ArchiveRecord(models.Model):
     updated_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        ordering = ['-archived_at', '-id']
         constraints = [
             models.UniqueConstraint(
                 fields=['institute', 'entity_type', 'source_id'],

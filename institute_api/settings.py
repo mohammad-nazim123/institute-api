@@ -42,6 +42,14 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PAGINATION_CLASS': 'institute_api.pagination.StandardResultsPagination',
     'PAGE_SIZE': 50,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',
+        'user': '1000/hour',
+    },
 }
 
 SIMPLE_JWT = {
@@ -94,6 +102,7 @@ INSTALLED_APPS = [
 
 
 MIDDLEWARE = [
+    'django.middleware.gzip.GZipMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
@@ -156,20 +165,27 @@ WSGI_APPLICATION = 'institute_api.wsgi.application'
 #  }
 
 tmpPostgres = urlparse(os.getenv('DATABASE_URL', ''))
+db_host = tmpPostgres.hostname or ''
+db_options = {
+    "sslmode": "require",
+    "connect_timeout": 3,
+}
+
+# Neon pooled connections reject startup options like statement_timeout.
+if "-pooler." not in db_host:
+    db_options["options"] = "-c statement_timeout=30000"
+
 DATABASES = {
    'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': tmpPostgres.path.replace('/', ''),
         'USER': tmpPostgres.username,
         'PASSWORD': tmpPostgres.password,
-        'HOST': tmpPostgres.hostname,
+        'HOST': db_host,
         'PORT': 5432,
         "CONN_MAX_AGE": 600,
         "CONN_HEALTH_CHECKS": True,
-        "OPTIONS": {
-            "sslmode": "require",
-            "connect_timeout": 3,
-        },
+        "OPTIONS": db_options,
     }
 }
 

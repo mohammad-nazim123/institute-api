@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 
 from attendance.models import Attendance
 from employee_account_details.models import EmployeeAccountDetail
+from institute_api.pagination import StandardResultsPagination
 from institute_api.permissions import InstituteKeyPermission
 from iinstitutes_list.models import Institute
 from payment_notification.models import PaymentNotification
@@ -401,11 +402,17 @@ class ArchiveListCreateView(APIView):
 
     def get(self, request):
         institute = get_requested_institute(request)
-        queryset = ArchiveRecord.objects.filter(institute=institute)
+        queryset = ArchiveRecord.objects.filter(institute=institute).order_by('-archived_at', '-id')
 
         entity_type = (request.query_params.get('entity_type') or '').strip().lower()
         if entity_type:
             queryset = queryset.filter(entity_type=entity_type)
+
+        paginator = StandardResultsPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        if page is not None:
+            serializer = ArchiveRecordSerializer(page, many=True)
+            return paginator.get_paginated_response(build_institute_response(institute, serializer.data))
 
         serializer = ArchiveRecordSerializer(queryset, many=True)
         return Response(build_institute_response(institute, serializer.data))

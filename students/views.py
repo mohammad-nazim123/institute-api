@@ -858,14 +858,13 @@ class SubjectsAssignedView(APIView):
         serializer = SubjectsAssignedSerializer(obj, data=request.data, partial=True)
         if serializer.is_valid():
             new_subject = serializer.validated_data.get('subject', obj.subject)
-            normalized_subject = self._normalize_subject(new_subject)
             duplicate_exists = (
                 SubjectsAssigned.objects
-                .filter(student_id=obj.student_id)
+                .filter(student_id=obj.student_id, subject__iexact=new_subject)
                 .exclude(pk=obj.pk)
-                .values_list('subject', flat=True)
+                .exists()
             )
-            if any(self._normalize_subject(subject) == normalized_subject for subject in duplicate_exists):
+            if duplicate_exists:
                 return Response(
                     {'detail': 'Subject already assigned for this student.'},
                     status=status.HTTP_400_BAD_REQUEST,

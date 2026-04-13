@@ -129,25 +129,23 @@ class StudentSerializer(OptionalAndBlankMixin, ModelSerializer):
             student = Student.objects.create(**validated_data)
 
             if education_details_data:
-                StudentEducationDetails.objects.create(student=student, **education_details_data)
+                student.education_details = StudentEducationDetails.objects.create(student=student, **education_details_data)
 
             if contact_details_data:
-                StudentContactDetails.objects.create(student=student, **contact_details_data)
+                student.contact_details = StudentContactDetails.objects.create(student=student, **contact_details_data)
 
             if admission_details_data:
-                StudentAdmissionDetails.objects.create(student=student, **admission_details_data)
+                student.admission_details = StudentAdmissionDetails.objects.create(student=student, **admission_details_data)
 
             if course_assignments_data:
-                StudentCourseAssignment.objects.create(student=student, **course_assignments_data)
+                student.course_assignments = StudentCourseAssignment.objects.create(student=student, **course_assignments_data)
 
             if fee_details_data:
-                StudentFeeDetails.objects.create(student=student, **fee_details_data)
+                student.fee_details = StudentFeeDetails.objects.create(student=student, **fee_details_data)
 
             if system_details_data:
-                StudentSystemDetails.objects.create(student=student, **system_details_data)
+                student.system_details = StudentSystemDetails.objects.create(student=student, **system_details_data)
 
-        # Refresh from DB to load the related objects for the response
-        student.refresh_from_db()
         return student
 
     def validate(self, attrs):
@@ -256,13 +254,17 @@ class StudentIdLookUpSerializer(serializers.Serializer):
 
         try:
             if email:
-                student = Student.objects.get(
+                student = Student.objects.select_related(
+                    'contact_details', 'system_details'
+                ).get(
                     institute=institute,
                     contact_details__email=email,
                     system_details__student_personal_id=student_personal_id
                 )
             elif mobile:
-                student = Student.objects.get(
+                student = Student.objects.select_related(
+                    'contact_details', 'system_details'
+                ).get(
                     institute=institute,
                     contact_details__mobile=mobile,
                     system_details__student_personal_id=student_personal_id

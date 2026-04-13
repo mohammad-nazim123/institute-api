@@ -159,7 +159,9 @@ class InstituteVerifyView(APIView):
 
         if len(admin_key) == 32:
             try:
-                institute = get_institute_detail_queryset().get(institute_name=institute_name)
+                institute = Institute.objects.only(
+                    'id', 'institute_name', 'super_admin_name', 'admin_key'
+                ).get(institute_name=institute_name)
             except Institute.DoesNotExist:
                 return Response(
                     {'detail': 'Invalid institute name or admin key.'},
@@ -178,7 +180,8 @@ class InstituteVerifyView(APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-            detail_serializer = InstituteDetailSerializer(institute)
+            detail_institute = get_institute_detail_queryset().get(pk=institute.pk)
+            detail_serializer = InstituteDetailSerializer(detail_institute)
             return Response(detail_serializer.data)
 
         try:

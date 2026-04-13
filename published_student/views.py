@@ -9,6 +9,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from institute_api.pagination import StandardResultsPagination
 from institute_api.permissions import (
     ADMIN_ACCESS_CONTROL,
     STUDENT_ACCESS_CONTROL,
@@ -227,10 +228,15 @@ class PublishedStudentListView(APIView):
 
     def get(self, request):
         institute = request._verified_institute
-        serializer = PublishedStudentSerializer(
-            get_published_student_queryset(institute),
-            many=True,
-        )
+        queryset = get_published_student_queryset(institute)
+
+        paginator = StandardResultsPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        if page is not None:
+            serializer = PublishedStudentSerializer(page, many=True)
+            return paginator.get_paginated_response(build_institute_response(institute, serializer.data))
+
+        serializer = PublishedStudentSerializer(queryset, many=True)
         return Response(build_institute_response(institute, serializer.data))
 
     def post(self, request):
