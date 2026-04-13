@@ -17,6 +17,42 @@ ACADEMIC_TERMS_TYPE_CHOICES = [
     (ACADEMIC_TERMS_TYPE_YEAR, 'Year Wise'),
 ]
 
+ACADEMIC_TERMS_TOTAL_BY_TYPE = {
+    ACADEMIC_TERMS_TYPE_SEMESTER: 8,
+    ACADEMIC_TERMS_TYPE_YEAR: 4,
+}
+
+ACADEMIC_TERM_SUFFIX_BY_TYPE = {
+    ACADEMIC_TERMS_TYPE_SEMESTER: 'Semester',
+    ACADEMIC_TERMS_TYPE_YEAR: 'Year',
+}
+
+
+def ordinal_label(number):
+    number = int(number)
+    if 10 <= (number % 100) <= 20:
+        suffix = 'th'
+    else:
+        suffix = {
+            1: 'st',
+            2: 'nd',
+            3: 'rd',
+        }.get(number % 10, 'th')
+    return f'{number}{suffix}'
+
+
+def build_default_academic_terms_for_type(academic_terms_type):
+    normalized_type = str(academic_terms_type or '').strip().lower()
+    if normalized_type not in ACADEMIC_TERMS_TOTAL_BY_TYPE:
+        normalized_type = ACADEMIC_TERMS_TYPE_SEMESTER
+
+    suffix = ACADEMIC_TERM_SUFFIX_BY_TYPE[normalized_type]
+    total = ACADEMIC_TERMS_TOTAL_BY_TYPE[normalized_type]
+    return [
+        f'{ordinal_label(index)} {suffix}'
+        for index in range(1, total + 1)
+    ]
+
 
 class DefaultActivity(models.Model):
     institute = models.OneToOneField(

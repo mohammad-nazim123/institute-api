@@ -26,11 +26,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-_u%h!_q2l_l42cg#q@h3ocx=!r3=#v!icu*arh4na-zxls9sdq'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-change-me-in-production')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-# DEBUG = False
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = ['*','localhost', '127.0.0.1', '.amazonaws.com','main.d3e0ptm41k0biu.amplifyapp.com']
 APPEND_SLASH = False
@@ -41,11 +40,16 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    'DEFAULT_PAGINATION_CLASS': 'institute_api.pagination.StandardResultsPagination',
+    'PAGE_SIZE': 50,
 }
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
 }
 
 
@@ -102,7 +106,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'institute_api.urls'
-CORS_ALLOW_ALL_ORIGINS = True 
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL', 'False') == 'True'
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
@@ -151,8 +155,7 @@ WSGI_APPLICATION = 'institute_api.wsgi.application'
 #     }
 #  }
 
-tmpPostgres=urlparse('postgresql://neondb_owner:npg_FJ6GVXOpv1um@ep-proud-mud-ai9wuq5b-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require')
-#tmpPostgres = urlparse(os.getenv("DATABASE_URL"))
+tmpPostgres = urlparse(os.getenv('DATABASE_URL', ''))
 DATABASES = {
    'default': {
         'ENGINE': 'django.db.backends.postgresql',

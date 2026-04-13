@@ -21,8 +21,8 @@ class StudentContactDetailsAdmin(admin.ModelAdmin):
 
 @admin.register(StudentEducationDetails)
 class StudentEducationDetailsAdmin(admin.ModelAdmin):
-    list_display = ('id', 'student', 'qualification', 'passing_year', 'instutute_name', 'marks_obtained')
-    search_fields = ('student__name', 'qualification', 'instutute_name')
+    list_display = ('id', 'student', 'qualification', 'passing_year', 'institute_name', 'marks_obtained')
+    search_fields = ('student__name', 'qualification', 'institute_name')
 
 
 @admin.register(StudentAdmissionDetails)
@@ -53,6 +53,6 @@ class StudentFeeDetailsAdmin(admin.ModelAdmin):
 
 @admin.register(StudentSystemDetails)
 class StudentSystemDetailsAdmin(admin.ModelAdmin):
-    list_display = ('id', 'student', 'student_personal_id', 'library_card_number', 'varification_status')
+    list_display = ('id', 'student', 'student_personal_id', 'library_card_number', 'verification_status')
     search_fields = ('student__name', 'student_personal_id', 'library_card_number')
-    list_filter = ('varification_status',)
+    list_filter = ('verification_status',)

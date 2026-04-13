@@ -44,10 +44,10 @@ STUDENT_LIST_VALUE_FIELDS = (
     'category',
     'education_details__qualification',
     'education_details__passing_year',
-    'education_details__instutute_name',
+    'education_details__institute_name',
     'education_details__marks_obtained',
     'contact_details__email',
-    'contact_details__parmannent_address',
+    'contact_details__permanent_address',
     'contact_details__current_address',
     'contact_details__mobile',
     'contact_details__father_name',
@@ -68,7 +68,7 @@ STUDENT_LIST_VALUE_FIELDS = (
     'system_details__student_personal_id',
     'system_details__library_card_number',
     'system_details__hostel_details',
-    'system_details__varification_status',
+    'system_details__verification_status',
 )
 
 
@@ -99,14 +99,14 @@ def build_student_list_payload(row):
         'education_details': _build_related_payload(
             row,
             'education_details',
-            ('qualification', 'passing_year', 'instutute_name', 'marks_obtained'),
+            ('qualification', 'passing_year', 'institute_name', 'marks_obtained'),
         ),
         'contact_details': _build_related_payload(
             row,
             'contact_details',
             (
                 'email',
-                'parmannent_address',
+                'permanent_address',
                 'current_address',
                 'mobile',
                 'father_name',
@@ -140,7 +140,7 @@ def build_student_list_payload(row):
         'system_details': _build_related_payload(
             row,
             'system_details',
-            ('student_personal_id', 'library_card_number', 'hostel_details', 'varification_status'),
+            ('student_personal_id', 'library_card_number', 'hostel_details', 'verification_status'),
         ),
     }
 

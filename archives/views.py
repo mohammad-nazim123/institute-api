@@ -28,7 +28,7 @@ from professors.models import (
 )
 from set_exam_data.models import ObtainedMarks
 from students.models import (
-    AttedanceDate,
+    AttendanceDate,
     Student,
     StudentAdmissionDetails,
     StudentContactDetails,
@@ -101,7 +101,7 @@ def get_student_archive_queryset(institute, source_id=None):
         )
         .prefetch_related(
             Prefetch('subjects_assigned', queryset=SubjectsAssigned.objects.order_by('id')),
-            Prefetch('attendance_dates', queryset=AttedanceDate.objects.order_by('id')),
+            Prefetch('attendance_dates', queryset=AttendanceDate.objects.order_by('id')),
             Prefetch(
                 'attendances',
                 queryset=Attendance.objects.select_related('marked_by').order_by('id'),
@@ -173,7 +173,7 @@ def build_student_snapshot(student):
         'contact_details': {
             'id': contact.id if contact else None,
             'email': contact.email if contact else '',
-            'parmannent_address': contact.parmannent_address if contact else '',
+            'permanent_address': contact.permanent_address if contact else '',
             'current_address': contact.current_address if contact else '',
             'mobile': contact.mobile if contact else '',
             'father_name': contact.father_name if contact else '',
@@ -185,7 +185,7 @@ def build_student_snapshot(student):
             'id': education.id if education else None,
             'qualification': education.qualification if education else '',
             'passing_year': education.passing_year if education else 0,
-            'instutute_name': education.instutute_name if education else '',
+            'institute_name': education.institute_name if education else '',
             'marks_obtained': education.marks_obtained if education else '',
         } if education else None,
         'admission_details': {
@@ -213,7 +213,7 @@ def build_student_snapshot(student):
             'student_personal_id': system.student_personal_id if system else '',
             'library_card_number': system.library_card_number if system else '',
             'hostel_details': system.hostel_details if system else '',
-            'varification_status': system.varification_status if system else '',
+            'verification_status': system.verification_status if system else '',
         } if system else None,
         'subjects_assigned': [
             {

@@ -50,3 +50,14 @@ class GracefulPageNumberPagination(PageNumberPagination):
             self.display_page_controls = True
 
         return list(self.page)
+
+
+class StandardResultsPagination(GracefulPageNumberPagination):
+    """
+    Default project-wide pagination.
+    Clients can override page size via ?page_size=N (capped at 200).
+    Response includes `count`, `next`, `previous`, and `results`.
+    """
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 200

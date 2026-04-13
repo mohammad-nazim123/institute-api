@@ -48,12 +48,7 @@ class InstituteDictResponseMixin:
                 institutes[institute_id] = OrderedDict([
                     ('id', institute_id),
                     ('name', institute_name),
-                    ('students', []),
-                    ('professors', []),
-                    ('courses', []),
-                    ('weekly_schedules', []),
-                    ('exam_schedules', []),
-                    ('professors_payments', []),
+                    (self.entity_key, []),
                 ])
 
             institutes[institute_id][self.entity_key].append(item)

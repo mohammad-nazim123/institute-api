@@ -49,6 +49,15 @@ class DefaultActivityApiTests(APITestCase):
         self.assertEqual(create_response.data['opening_time'], '08:00 AM')
         self.assertEqual(create_response.data['closing_time'], '04:00 PM')
         self.assertEqual(create_response.data['total_yearly_leaves'], 50)
+        self.assertEqual(
+            list(
+                AcademicTerm.objects
+                .filter(institute=self.institute)
+                .order_by('sort_order', 'id')
+                .values_list('name', flat=True)
+            )[:2],
+            ['1st Semester', '2nd Semester'],
+        )
         default_activity_id = create_response.data['id']
 
         patch_response = self.client.patch(
@@ -251,6 +260,16 @@ class DefaultActivityApiTests(APITestCase):
             institute=self.institute,
             academic_terms_type='year',
         )
+        AcademicTerm.objects.bulk_create([
+            AcademicTerm(institute=self.institute, name='1st Semester', sort_order=1),
+            AcademicTerm(institute=self.institute, name='2nd Semester', sort_order=2),
+            AcademicTerm(institute=self.institute, name='3rd Semester', sort_order=3),
+            AcademicTerm(institute=self.institute, name='4th Semester', sort_order=4),
+            AcademicTerm(institute=self.institute, name='5th Semester', sort_order=5),
+            AcademicTerm(institute=self.institute, name='6th Semester', sort_order=6),
+            AcademicTerm(institute=self.institute, name='7th Semester', sort_order=7),
+            AcademicTerm(institute=self.institute, name='8th Semester', sort_order=8),
+        ])
         student = Student.objects.create(
             institute=self.institute,
             name='Student One',
@@ -299,12 +318,80 @@ class DefaultActivityApiTests(APITestCase):
         published_student.refresh_from_db()
 
         self.assertEqual(default_activity.academic_terms_type, 'semester')
+        self.assertEqual(
+            list(
+                AcademicTerm.objects
+                .filter(institute=self.institute)
+                .order_by('sort_order', 'id')
+                .values_list('name', flat=True)
+            ),
+            [
+                '1st Semester',
+                '2nd Semester',
+                '3rd Semester',
+                '4th Semester',
+                '5th Semester',
+                '6th Semester',
+                '7th Semester',
+                '8th Semester',
+            ],
+        )
         self.assertEqual(course_assignment.academic_term, 'Semester 1st')
         self.assertEqual(syllabus_term.name, 'Semester 1st')
         self.assertEqual(
             published_student.student_data['course_assignment']['academic_term'],
             'Semester 1st',
         )
+
+    def test_switching_to_year_resets_only_master_term_list(self):
+        default_activity = DefaultActivity.objects.create(
+            institute=self.institute,
+            academic_terms_type='semester',
+        )
+        AcademicTerm.objects.bulk_create([
+            AcademicTerm(institute=self.institute, name='1st Semester', sort_order=1),
+            AcademicTerm(institute=self.institute, name='2nd Semester', sort_order=2),
+            AcademicTerm(institute=self.institute, name='3rd Semester', sort_order=3),
+            AcademicTerm(institute=self.institute, name='4th Semester', sort_order=4),
+            AcademicTerm(institute=self.institute, name='5th Semester', sort_order=5),
+            AcademicTerm(institute=self.institute, name='6th Semester', sort_order=6),
+            AcademicTerm(institute=self.institute, name='7th Semester', sort_order=7),
+            AcademicTerm(institute=self.institute, name='8th Semester', sort_order=8),
+        ])
+        student = Student.objects.create(
+            institute=self.institute,
+            name='Student Year Switch',
+        )
+        course_assignment = StudentCourseAssignment.objects.create(
+            student=student,
+            class_name='B.Tech',
+            branch='CS',
+            academic_term='Semester 1st',
+        )
+
+        response = self.client.patch(
+            f"{reverse('default-activity-detail', args=[default_activity.id])}?institute={self.institute.id}",
+            {'academic_terms_type': 'year'},
+            format='json',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        default_activity.refresh_from_db()
+        course_assignment.refresh_from_db()
+
+        self.assertEqual(default_activity.academic_terms_type, 'year')
+        self.assertEqual(
+            list(
+                AcademicTerm.objects
+                .filter(institute=self.institute)
+                .order_by('sort_order', 'id')
+                .values_list('name', flat=True)
+            ),
+            ['1st Year', '2nd Year', '3rd Year', '4th Year'],
+        )
+        self.assertEqual(course_assignment.academic_term, 'Semester 1st')
 
     def test_academic_term_list_is_scoped_to_authenticated_institute(self):
         AcademicTerm.objects.create(

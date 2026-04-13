@@ -24,7 +24,7 @@ class Student(models.Model):
 class StudentContactDetails(models.Model):
     student = models.OneToOneField(Student, on_delete=models.CASCADE, related_name='contact_details')
     email = models.EmailField(unique=True, default="")
-    parmannent_address = models.TextField(default="")
+    permanent_address = models.TextField(db_column='parmannent_address', default="")
     current_address = models.TextField(default="")
     mobile = models.CharField(max_length=15, default="")
     father_name = models.CharField(max_length=100, default="")
@@ -46,7 +46,7 @@ class StudentEducationDetails(models.Model):
     student = models.OneToOneField(Student, on_delete=models.CASCADE, related_name='education_details')
     qualification = models.CharField(max_length=100, default="")
     passing_year = models.IntegerField(default=0)
-    instutute_name = models.CharField(max_length=100, default="")
+    institute_name = models.CharField(db_column='instutute_name', max_length=100, default="")
     marks_obtained = models.CharField(max_length=10, default="")
 
     def __str__(self):
@@ -82,9 +82,9 @@ class StudentCourseAssignment(models.Model):
 
 class StudentFeeDetails(models.Model):
     student = models.OneToOneField(Student, on_delete=models.CASCADE, related_name='fee_details')
-    total_fee_amount = models.FloatField(default=0.0)
-    paid_amount = models.FloatField(default=0.0)
-    pending_amount = models.FloatField(default=0.0)
+    total_fee_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    paid_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    pending_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
 
 class StudentSystemDetails(models.Model):
@@ -92,7 +92,7 @@ class StudentSystemDetails(models.Model):
     student_personal_id = models.CharField(max_length=50, default="")
     library_card_number = models.CharField(max_length=50, default="")
     hostel_details = models.CharField(max_length=100, default="")
-    varification_status = models.CharField(max_length=20, default="")
+    verification_status = models.CharField(db_column='varification_status', max_length=20, default="")
 
     class Meta:
         indexes = [
@@ -100,7 +100,7 @@ class StudentSystemDetails(models.Model):
         ]
 
 
-class AttedanceDate(models.Model):
+class AttendanceDate(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='attendance_dates')
     date = models.DateField(default=timezone.now)
 

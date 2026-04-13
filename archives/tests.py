@@ -22,7 +22,7 @@ from professors.models import (
 )
 from set_exam_data.models import ExamData, ObtainedMarks
 from students.models import (
-    AttedanceDate,
+    AttendanceDate,
     Student,
     StudentAdmissionDetails,
     StudentContactDetails,
@@ -70,7 +70,7 @@ class ArchiveApiTests(TestCase):
         StudentContactDetails.objects.create(
             student=self.student,
             email='alice@example.com',
-            parmannent_address='Permanent address',
+            permanent_address='Permanent address',
             current_address='Current address',
             mobile='9999999999',
             father_name='Father',
@@ -82,7 +82,7 @@ class ArchiveApiTests(TestCase):
             student=self.student,
             qualification='12th',
             passing_year=2024,
-            instutute_name='ABC School',
+            institute_name='ABC School',
             marks_obtained='92',
         )
         StudentAdmissionDetails.objects.create(
@@ -109,13 +109,13 @@ class ArchiveApiTests(TestCase):
             student_personal_id='STUDENT-0000001',
             library_card_number='LIB-1',
             hostel_details='Hostel A',
-            varification_status='verified',
+            verification_status='verified',
         )
         SubjectsAssigned.objects.bulk_create([
             SubjectsAssigned(student=self.student, subject='Math', unit='1'),
             SubjectsAssigned(student=self.student, subject='Physics', unit='2'),
         ])
-        AttedanceDate.objects.create(
+        AttendanceDate.objects.create(
             student=self.student,
             date=date(2026, 3, 15),
         )

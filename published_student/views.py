@@ -31,7 +31,7 @@ STUDENT_ONLY_FIELDS = (
     'identity',
     'category',
     'contact_details__email',
-    'contact_details__parmannent_address',
+    'contact_details__permanent_address',
     'contact_details__current_address',
     'contact_details__mobile',
     'contact_details__father_name',
@@ -40,7 +40,7 @@ STUDENT_ONLY_FIELDS = (
     'contact_details__parent_contact',
     'education_details__qualification',
     'education_details__passing_year',
-    'education_details__instutute_name',
+    'education_details__institute_name',
     'education_details__marks_obtained',
     'admission_details__enrollment_number',
     'admission_details__roll_number',
@@ -56,7 +56,7 @@ STUDENT_ONLY_FIELDS = (
     'system_details__student_personal_id',
     'system_details__library_card_number',
     'system_details__hostel_details',
-    'system_details__varification_status',
+    'system_details__verification_status',
 )
 
 PUBLISHED_ONLY_FIELDS = (
@@ -147,7 +147,7 @@ def build_student_snapshot(student):
         'category': student.category,
         'contact_details': {
             'email': contact.email if contact else '',
-            'parmannent_address': contact.parmannent_address if contact else '',
+            'permanent_address': contact.permanent_address if contact else '',
             'current_address': contact.current_address if contact else '',
             'mobile': contact.mobile if contact else '',
             'father_name': contact.father_name if contact else '',
@@ -158,7 +158,7 @@ def build_student_snapshot(student):
         'education_details': {
             'qualification': education.qualification if education else '',
             'passing_year': education.passing_year if education else 0,
-            'instutute_name': education.instutute_name if education else '',
+            'institute_name': education.institute_name if education else '',
             'marks_obtained': education.marks_obtained if education else '',
         },
         'admission_details': {
@@ -182,7 +182,7 @@ def build_student_snapshot(student):
             'student_personal_id': system.student_personal_id if system else '',
             'library_card_number': system.library_card_number if system else '',
             'hostel_details': system.hostel_details if system else '',
-            'varification_status': system.varification_status if system else '',
+            'verification_status': system.verification_status if system else '',
         },
     }
 

@@ -12,6 +12,7 @@ POST /notifications/contact-us/
 
 The student/professor endpoints are protected by the x-admin-key header.
 """
+import hmac
 import json
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -36,7 +37,8 @@ ADMIN_KEY = getattr(settings, "ADMIN_KEY", "")
 def _check_admin_key(request):
     """Return None if authorised, else a 403 JsonResponse."""
     key = request.headers.get("x-admin-key", "")
-    if ADMIN_KEY and key != ADMIN_KEY:
+    # Use constant-time comparison to prevent timing attacks
+    if ADMIN_KEY and not hmac.compare_digest(str(key), str(ADMIN_KEY)):
         return JsonResponse({"error": "Unauthorized"}, status=403)
     return None
 

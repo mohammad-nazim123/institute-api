@@ -218,7 +218,7 @@ class Command(BaseCommand):
                 StudentContactDetails.objects.create(
                     student=student,
                     email=f'ba.history.{seed_number:04d}@dummy.local',
-                    parmannent_address=f'History Lane {seed_number}, Kolkata',
+                    permanent_address=f'History Lane {seed_number}, Kolkata',
                     current_address=f'History Lane {seed_number}, Kolkata',
                     mobile=self._build_mobile_number(seed_number),
                     father_name=f'Parent {seed_number:03d}',
@@ -230,7 +230,7 @@ class Command(BaseCommand):
                     student=student,
                     qualification='12th Pass',
                     passing_year=2024,
-                    instutute_name='Dummy Higher Secondary School',
+                    institute_name='Dummy Higher Secondary School',
                     marks_obtained='82%',
                 )
                 StudentAdmissionDetails.objects.create(
@@ -257,7 +257,7 @@ class Command(BaseCommand):
                     student_personal_id=self._build_personal_id(seed_number),
                     library_card_number=self._build_library_id(seed_number),
                     hostel_details='Day Scholar',
-                    varification_status='verified',
+                    verification_status='verified',
                 )
 
                 self._create_subject_rows(student)

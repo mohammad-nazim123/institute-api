@@ -1,5 +1,6 @@
 import re
 
+from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from rest_framework import serializers
@@ -9,6 +10,7 @@ from .models import (
     ACADEMIC_TERMS_TYPE_YEAR,
     AcademicTerm,
     DefaultActivity,
+    build_default_academic_terms_for_type,
 )
 
 
@@ -86,6 +88,24 @@ def normalize_session_year(value):
         )
 
     return f'{start_year}-{end_year}'
+
+
+def sync_academic_terms_for_institute(institute, academic_terms_type, *, reset=False):
+    existing_terms = AcademicTerm.objects.filter(institute=institute)
+    if existing_terms.exists() and not reset:
+        return
+
+    desired_terms = build_default_academic_terms_for_type(academic_terms_type)
+    with transaction.atomic():
+        existing_terms.delete()
+        AcademicTerm.objects.bulk_create([
+            AcademicTerm(
+                institute=institute,
+                name=name,
+                sort_order=index,
+            )
+            for index, name in enumerate(desired_terms, start=1)
+        ])
 
 
 class DefaultActivitySerializer(serializers.ModelSerializer):
@@ -175,7 +195,24 @@ class DefaultActivitySerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data['institute'] = self.context['institute']
-        return super().create(validated_data)
+        default_activity = super().create(validated_data)
+        sync_academic_terms_for_institute(
+            default_activity.institute,
+            default_activity.academic_terms_type,
+            reset=False,
+        )
+        return default_activity
+
+    def update(self, instance, validated_data):
+        previous_academic_terms_type = instance.academic_terms_type
+        default_activity = super().update(instance, validated_data)
+        if previous_academic_terms_type != default_activity.academic_terms_type:
+            sync_academic_terms_for_institute(
+                default_activity.institute,
+                default_activity.academic_terms_type,
+                reset=True,
+            )
+        return default_activity
 
 
 class AcademicTermSerializer(serializers.ModelSerializer):

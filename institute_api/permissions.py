@@ -1,6 +1,7 @@
 import hmac
 
 from django.conf import settings
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.permissions import BasePermission
 from rest_framework.exceptions import PermissionDenied
 
@@ -237,12 +238,12 @@ class PersonalKeyPermission(BasePermission):
         if isinstance(obj, Student):
             try:
                 expected_key = obj.system_details.student_personal_id
-            except Exception:
+            except (AttributeError, ObjectDoesNotExist):
                 raise PermissionDenied('Student system details not found.')
         elif isinstance(obj, Professor):
             try:
                 expected_key = obj.admin_employement.personal_id
-            except Exception:
+            except (AttributeError, ObjectDoesNotExist):
                 raise PermissionDenied('Professor admin employment details not found.')
         else:
             raise PermissionDenied('Unsupported object type for personal key check.')
@@ -288,7 +289,7 @@ class StudentPersonalKeyPermission(BasePermission):
 
         try:
             expected_key = obj.system_details.student_personal_id
-        except Exception:
+        except (AttributeError, ObjectDoesNotExist):
             raise PermissionDenied('Student system details not found.')
 
         if personal_key != expected_key:
@@ -361,7 +362,7 @@ class StudentRetrievePermission(BasePermission):
 
         try:
             expected_key = obj.system_details.student_personal_id
-        except Exception:
+        except (AttributeError, ObjectDoesNotExist):
             raise PermissionDenied('Student system details not found.')
 
         if personal_key != expected_key:
@@ -431,7 +432,7 @@ class ProfessorRetrievePermission(BasePermission):
 
         try:
             expected_key = obj.admin_employement.personal_id
-        except Exception:
+        except (AttributeError, ObjectDoesNotExist):
             raise PermissionDenied('Professor admin employment details not found.')
 
         if personal_key != expected_key:

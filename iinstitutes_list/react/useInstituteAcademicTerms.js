@@ -242,52 +242,57 @@ export async function fetchInstituteAcademicTerms({
     throw new Error("Institute id is required.");
   }
 
+  let cachedValue = null;
   if (preferCache) {
-    const cachedValue = await readCachedInstituteAcademicTerms({
+    cachedValue = await readCachedInstituteAcademicTerms({
       instituteId,
       encryptionSecret,
     });
+  }
+
+  try {
+    const response = await fetch(
+      buildInstituteAcademicTermsUrl({ baseUrl, instituteId }),
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(adminKey ? { "X-Admin-Key": adminKey } : {}),
+        },
+        signal,
+      },
+    );
+
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "Unable to load institute academic terms.");
+    }
+
+    const normalizedPayload = normalizeInstituteAcademicTermsPayload(payload, instituteId);
+    const cachePayload = {
+      ...normalizedPayload,
+      cachedAt: new Date().toISOString(),
+    };
+
+    await writeCachedInstituteAcademicTerms({
+      instituteId,
+      payload: cachePayload,
+      encryptionSecret,
+    });
+
+    return {
+      ...cachePayload,
+      source: "api",
+    };
+  } catch (error) {
     if (cachedValue) {
       return {
         ...cachedValue,
         source: "localstorage",
       };
     }
+    throw error;
   }
-
-  const response = await fetch(
-    buildInstituteAcademicTermsUrl({ baseUrl, instituteId }),
-    {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        ...(adminKey ? { "X-Admin-Key": adminKey } : {}),
-      },
-      signal,
-    },
-  );
-
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.detail || "Unable to load institute academic terms.");
-  }
-
-  const normalizedPayload = normalizeInstituteAcademicTermsPayload(payload, instituteId);
-  const cachePayload = {
-    ...normalizedPayload,
-    cachedAt: new Date().toISOString(),
-  };
-
-  await writeCachedInstituteAcademicTerms({
-    instituteId,
-    payload: cachePayload,
-    encryptionSecret,
-  });
-
-  return {
-    ...cachePayload,
-    source: "api",
-  };
 }
 
 export function resolveAcademicTermsOptions({
@@ -298,6 +303,10 @@ export function resolveAcademicTermsOptions({
 }) {
   if (!termsConfig) {
     return [];
+  }
+
+  if (Array.isArray(termsConfig.academicTerms) && termsConfig.academicTerms.length > 0) {
+    return termsConfig.academicTerms;
   }
 
   const normalizedClassName = normalizeText(className);
@@ -319,7 +328,7 @@ export function resolveAcademicTermsOptions({
     }
   }
 
-  return termsConfig.academicTerms || [];
+  return [];
 }
 
 export function buildInstituteHierarchyUrl({

@@ -44,7 +44,7 @@ class PublishedStudentApiTests(TestCase):
         StudentContactDetails.objects.create(
             student=student,
             email=email,
-            parmannent_address='Perm address',
+            permanent_address='Perm address',
             current_address='Curr address',
             mobile='9999999999',
             father_name='Father',
@@ -56,7 +56,7 @@ class PublishedStudentApiTests(TestCase):
             student=student,
             qualification='12th',
             passing_year=2024,
-            instutute_name='ABC School',
+            institute_name='ABC School',
             marks_obtained='92',
         )
         StudentAdmissionDetails.objects.create(
@@ -83,7 +83,7 @@ class PublishedStudentApiTests(TestCase):
             student_personal_id=personal_id,
             library_card_number='LIB-1',
             hostel_details='Hostel A',
-            varification_status='verified',
+            verification_status='verified',
         )
         SubjectsAssigned.objects.bulk_create([
             SubjectsAssigned(student=student, subject='Math', unit='1'),
