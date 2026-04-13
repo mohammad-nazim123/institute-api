@@ -1,6 +1,5 @@
 from rest_framework.response import Response
 from collections import OrderedDict
-from iinstitutes_list.academic_terms import get_academic_terms_for_institute
 from institute_api.permissions import InstituteKeyPermission
 from rest_framework import serializers
 
@@ -49,8 +48,6 @@ class InstituteDictResponseMixin:
                 institutes[institute_id] = OrderedDict([
                     ('id', institute_id),
                     ('name', institute_name),
-                    ('academic_terms_type', institute_meta.get('academic_terms_type')),
-                    ('academic_terms', institute_meta.get('academic_terms', [])),
                     ('students', []),
                     ('professors', []),
                     ('courses', []),
@@ -80,13 +77,10 @@ class InstituteDictResponseMixin:
         return {
             institute.id: {
                 'name': institute.institute_name,
-                'academic_terms_type': getattr(institute, 'academic_terms_type', None),
-                'academic_terms': get_academic_terms_for_institute(institute),
             }
             for institute in Institute.objects.filter(pk__in=institute_ids).only(
                 'id',
                 'institute_name',
-                'academic_terms_type',
             )
         }
 
@@ -97,10 +91,7 @@ class InstituteDictResponseMixin:
             return (
                 institute_val.get('id'),
                 institute_val.get('name', 'Unknown Institute'),
-                {
-                    'academic_terms_type': institute_val.get('academic_terms_type'),
-                    'academic_terms': institute_val.get('academic_terms', []),
-                },
+                {},
             )
         
         if institute_val is not None:

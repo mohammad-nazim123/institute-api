@@ -41,4 +41,5 @@ urlpatterns = [
     path('subordinate_access/', include('subordinate_access.urls')),
     path('activity_feed/', include('activity_feed.urls')),
     path('default_activities/', include('default_activities.urls')),
+    path('contact_us/', include('contact_us.urls')),
 ]

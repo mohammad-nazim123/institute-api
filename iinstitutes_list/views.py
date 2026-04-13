@@ -1,10 +1,8 @@
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Prefetch
-from .academic_terms import get_academic_terms_for_institute
 from .models import Institute
 from .serializers import InstituteSerializer, InstituteDetailSerializer, InstituteVerifySerializer
 from professors.models import Professor
@@ -70,7 +68,6 @@ def get_institute_detail_queryset():
         'id',
         'institute_name',
         'super_admin_name',
-        'academic_terms_type',
         'admin_key',
         'event_status',
         'event_timer_end',
@@ -104,17 +101,6 @@ class InstituteViewSet(ModelViewSet):
         serializer = self.get_serializer(instance)
         # Wrap the single instance in a list as requested
         return Response([serializer.data])
-
-    @action(detail=True, methods=['get'], url_path='academic-terms')
-    def academic_terms(self, request, pk=None):
-        institute = self.get_object()
-        return Response({
-            'id': institute.id,
-            'institute_name': institute.institute_name,
-            'name': institute.institute_name,
-            'academic_terms_type': institute.academic_terms_type,
-            'academic_terms': get_academic_terms_for_institute(institute),
-        })
 
 
 class InstituteVerifyView(APIView):

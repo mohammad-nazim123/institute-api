@@ -1,8 +1,10 @@
 """
 Notification helper utilities: email (Django SMTP) + SMS (Twilio).
 """
-from django.core.mail import send_mail
+from email.utils import formataddr
+
 from django.conf import settings
+from django.core.mail import EmailMessage, get_connection, send_mail
 
 
 # ──────────────────────────────────────
@@ -34,6 +36,56 @@ def send_id_email(to_email: str, personal_id: str, name: str, role: str = "Membe
             recipient_list=[to_email],
             fail_silently=False,
         )
+        return {"success": True}
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def send_contact_us_email(sender_email: str, message: str) -> dict:
+    """
+    Send the admin access contact-us message to the configured inbox.
+    The sender email is attached as Reply-To so support can answer directly.
+    """
+    smtp_username = getattr(settings, "CONTACT_US_EMAIL_HOST_USER", "") or getattr(
+        settings, "EMAIL_HOST_USER", ""
+    )
+    smtp_password = getattr(settings, "CONTACT_US_EMAIL_HOST_PASSWORD", "") or getattr(
+        settings, "EMAIL_HOST_PASSWORD", ""
+    )
+    from_email = getattr(settings, "CONTACT_US_FROM_EMAIL", "") or smtp_username
+    recipient_email = getattr(settings, "CONTACT_US_RECIPIENT_EMAIL", "") or smtp_username
+
+    if not from_email:
+        return {"success": False, "error": "Contact sender email is not configured"}
+    if not recipient_email:
+        return {"success": False, "error": "Contact recipient email is not configured"}
+
+    try:
+        connection = get_connection(
+            backend=getattr(settings, "EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend"),
+            host=getattr(settings, "CONTACT_US_EMAIL_HOST", getattr(settings, "EMAIL_HOST", "smtp.gmail.com")),
+            port=getattr(settings, "CONTACT_US_EMAIL_PORT", getattr(settings, "EMAIL_PORT", 587)),
+            username=smtp_username or None,
+            password=smtp_password or None,
+            use_tls=getattr(settings, "CONTACT_US_EMAIL_USE_TLS", getattr(settings, "EMAIL_USE_TLS", True)),
+            fail_silently=False,
+        )
+        email_message = EmailMessage(
+            subject=getattr(settings, "CONTACT_US_SUBJECT", "Admin Access Contact Request"),
+            body=(
+                "A new admin access contact request was submitted.\n\n"
+                f"Sender email: {sender_email}\n\n"
+                "Message:\n"
+                f"{message}"
+            ),
+            from_email=formataddr(
+                (getattr(settings, "CONTACT_US_FROM_NAME", "educonnectz"), from_email)
+            ),
+            to=[recipient_email],
+            reply_to=[sender_email],
+            connection=connection,
+        )
+        email_message.send(fail_silently=False)
         return {"success": True}
     except Exception as exc:
         return {"success": False, "error": str(exc)}

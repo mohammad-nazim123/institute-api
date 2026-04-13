@@ -1,10 +1,5 @@
 from rest_framework.serializers import ModelSerializer
 from rest_framework import serializers
-from .academic_terms import (
-    get_academic_terms_for_institute,
-    normalize_academic_terms_type,
-    sync_institute_academic_terms,
-)
 from .models import Institute
 from collections import OrderedDict
 from students.serializers import StudentSerializer
@@ -14,7 +9,6 @@ from syllabus.serializers import CourseSerializer
 
 class InstituteSerializer(ModelSerializer):
     institute_name = serializers.CharField()
-    academic_terms = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Institute
@@ -22,8 +16,6 @@ class InstituteSerializer(ModelSerializer):
             'id',
             'institute_name',
             'super_admin_name',
-            'academic_terms_type',
-            'academic_terms',
             'admin_key',
             'event_status',
             'event_timer_end',
@@ -34,27 +26,11 @@ class InstituteSerializer(ModelSerializer):
             'event_timer_end': {'read_only': True},
         }
 
-    def get_academic_terms(self, instance):
-        return get_academic_terms_for_institute(instance)
-
     def to_internal_value(self, data):
         mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
         if 'institute_name' not in mutable_data and 'name' in mutable_data:
             mutable_data['institute_name'] = mutable_data['name']
         return super().to_internal_value(mutable_data)
-
-    def validate_academic_terms_type(self, value):
-        return normalize_academic_terms_type(value)
-
-    def create(self, validated_data):
-        institute = super().create(validated_data)
-        sync_institute_academic_terms(institute)
-        return institute
-
-    def update(self, instance, validated_data):
-        institute = super().update(instance, validated_data)
-        sync_institute_academic_terms(institute)
-        return institute
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -94,7 +70,6 @@ class InstituteDetailSerializer(ModelSerializer):
     students = StudentSerializer(many=True, read_only=True)
     professors = ProfessorSerializer(many=True, read_only=True)
     courses = CourseSerializer(many=True, read_only=True)
-    academic_terms = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Institute
@@ -102,17 +77,12 @@ class InstituteDetailSerializer(ModelSerializer):
             'id',
             'institute_name',
             'super_admin_name',
-            'academic_terms_type',
-            'academic_terms',
             'event_status',
             'event_timer_end',
             'students',
             'professors',
             'courses',
         ]
-
-    def get_academic_terms(self, instance):
-        return get_academic_terms_for_institute(instance)
 
     def to_representation(self, instance):
         """Convert to nested dictionary keyed by entity name."""
@@ -141,8 +111,6 @@ class InstituteDetailSerializer(ModelSerializer):
             ('institute_name', data['institute_name']),
             ('name', data['institute_name']),
             ('super_admin_name', data.get('super_admin_name', '')),
-            ('academic_terms_type', data.get('academic_terms_type')),
-            ('academic_terms', data.get('academic_terms', [])),
             ('event_status', data.get('event_status', 'active')),
             ('event_timer_end', data.get('event_timer_end')),
             ('students', students_dict),

@@ -1,6 +1,5 @@
 import secrets
 from django.db import models
-from .academic_terms import ACADEMIC_TERMS_TYPE_CHOICES, get_academic_terms_for_institute
 
 
 def generate_unique_key():
@@ -18,12 +17,6 @@ EVENT_STATUS_CHOICES = [
 class Institute(models.Model):
     institute_name = models.CharField(max_length=255, verbose_name='Institute name')
     super_admin_name = models.CharField(max_length=255, blank=True, default='')
-    academic_terms_type = models.CharField(
-        max_length=20,
-        choices=ACADEMIC_TERMS_TYPE_CHOICES,
-        default='semester',
-        help_text='Choose whether this institute uses semester-wise or year-wise academic terms.',
-    )
     admin_key = models.CharField(
         max_length=32,
         unique=True,
@@ -60,10 +53,6 @@ class Institute(models.Model):
     @name.setter
     def name(self, value):
         self.institute_name = value
-
-    @property
-    def academic_terms(self):
-        return get_academic_terms_for_institute(self)
 
     def __str__(self):
         return self.institute_name

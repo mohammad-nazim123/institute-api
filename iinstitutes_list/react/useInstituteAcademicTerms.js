@@ -137,15 +137,36 @@ async function decryptCacheValue({ instituteId, encryptedValue, encryptionSecret
   }
 }
 
-function normalizeInstituteAcademicTermsPayload(payload) {
+function normalizeInstituteAcademicTermsPayload(payload, instituteId) {
+  if (!payload) {
+    return {
+      id: instituteId ?? null,
+      instituteName: "",
+      academicTermsType: null,
+      academicTerms: [],
+    };
+  }
+
+  if (!Array.isArray(payload) && Array.isArray(payload.academic_terms)) {
+    const sourcePayload = payload || {};
+    return {
+      id: sourcePayload.id ?? instituteId ?? null,
+      instituteName: sourcePayload.institute_name || sourcePayload.name || "",
+      academicTermsType: sourcePayload.academic_terms_type || null,
+      academicTerms: sourcePayload.academic_terms.filter((item) => normalizeText(item)),
+    };
+  }
+
+  const sourceItems = Array.isArray(payload) ? payload : [];
+  const firstItem = sourceItems[0] || {};
   const sourcePayload = Array.isArray(payload) ? payload[0] || {} : payload || {};
   return {
-    id: sourcePayload.id ?? null,
-    instituteName: sourcePayload.institute_name || sourcePayload.name || "",
-    academicTermsType: sourcePayload.academic_terms_type || "semester",
-    academicTerms: Array.isArray(sourcePayload.academic_terms)
-      ? sourcePayload.academic_terms
-      : [],
+    id: firstItem.institute ?? instituteId ?? sourcePayload.id ?? null,
+    instituteName: firstItem.institute_name || sourcePayload.institute_name || sourcePayload.name || "",
+    academicTermsType: null,
+    academicTerms: sourceItems
+      .map((item) => item?.name)
+      .filter((item) => normalizeText(item)),
   };
 }
 
@@ -202,7 +223,11 @@ export function clearCachedInstituteAcademicTerms(instituteId) {
 }
 
 export function buildInstituteAcademicTermsUrl({ baseUrl, instituteId }) {
-  return `${toBaseUrl(baseUrl)}/institutes/institute/${instituteId}/academic-terms/`;
+  const params = new URLSearchParams({
+    institute: `${instituteId}`,
+  });
+
+  return `${toBaseUrl(baseUrl)}/default_activities/academic-terms/?${params.toString()}`;
 }
 
 export async function fetchInstituteAcademicTerms({
@@ -247,7 +272,7 @@ export async function fetchInstituteAcademicTerms({
     throw new Error(payload.detail || "Unable to load institute academic terms.");
   }
 
-  const normalizedPayload = normalizeInstituteAcademicTermsPayload(payload);
+  const normalizedPayload = normalizeInstituteAcademicTermsPayload(payload, instituteId);
   const cachePayload = {
     ...normalizedPayload,
     cachedAt: new Date().toISOString(),

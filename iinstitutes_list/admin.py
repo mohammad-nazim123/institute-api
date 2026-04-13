@@ -3,7 +3,6 @@ from django.utils.html import format_html
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 from django import forms
-from .academic_terms import ACADEMIC_TERMS_TYPE_CHOICES, sync_institute_academic_terms
 from .models import Institute, generate_unique_key
 
 
@@ -27,12 +26,6 @@ class InstituteAdminForm(forms.ModelForm):
             'maxlength': '32',
         })
     )
-    academic_terms_type = forms.ChoiceField(
-        choices=ACADEMIC_TERMS_TYPE_CHOICES,
-        required=True,
-        label='Academic Terms',
-        help_text='Choose whether this institute will use semester-wise or year-wise academic terms.',
-    )
 
     class Meta:
         model = Institute
@@ -49,13 +42,12 @@ class InstituteAdmin(admin.ModelAdmin):
         'id',
         'institute_name',
         'super_admin_name',
-        'academic_terms_type',
         'show_full_key',
         'status_badge',
         'event_timer_end',
     )
     search_fields = ('institute_name', 'super_admin_name')
-    list_filter = ('academic_terms_type', 'event_status')
+    list_filter = ('event_status',)
     readonly_fields = ('show_full_key',)
     actions = ['activate_events', 'pause_events', 'stop_events']
 
@@ -89,7 +81,6 @@ class InstituteAdmin(admin.ModelAdmin):
             return [
                 'institute_name',
                 'super_admin_name',
-                'academic_terms_type',
                 'admin_key_input',
                 'event_status',
                 'timer_months',
@@ -98,7 +89,6 @@ class InstituteAdmin(admin.ModelAdmin):
         return [
             'institute_name',
             'super_admin_name',
-            'academic_terms_type',
             'show_full_key',
             'event_status',
             'event_timer_end',
@@ -107,15 +97,6 @@ class InstituteAdmin(admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         """Handle admin_key and timer_months before saving."""
-        previous_academic_terms_type = None
-        if change and obj.pk:
-            previous_academic_terms_type = (
-                Institute.objects
-                .filter(pk=obj.pk)
-                .values_list('academic_terms_type', flat=True)
-                .first()
-            )
-
         if not change:
             # Creating new — use the provided key or auto-generate
             provided_key = form.cleaned_data.get('admin_key_input', '').strip()
@@ -133,16 +114,6 @@ class InstituteAdmin(admin.ModelAdmin):
             obj.event_timer_end = None
 
         super().save_model(request, obj, form, change)
-
-        sync_summary = sync_institute_academic_terms(obj)
-        if change and previous_academic_terms_type != obj.academic_terms_type and sync_summary['total_updates']:
-            self.message_user(
-                request,
-                (
-                    f"Academic terms switched to {obj.get_academic_terms_type_display()} "
-                    f"and synced {sync_summary['total_updates']} related record(s)."
-                ),
-            )
 
     # ── Bulk Admin Actions ──────────────────────────────────
 

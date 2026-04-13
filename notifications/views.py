@@ -7,18 +7,23 @@ POST /notifications/send-student-id/
 POST /notifications/send-professor-id/
     Body: { "professor_id": <int>, "channel": "email" | "sms" | "both" }
 
-Protected by the x-admin-key header (same mechanism as other admin endpoints).
+POST /notifications/contact-us/
+    Body: { "email": "<sender email>", "message": "<contact message>" }
+
+The student/professor endpoints are protected by the x-admin-key header.
 """
 import json
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
-from students.models import Student, StudentSystemDetails, StudentContactDetails
-from professors.models import Professor, professorAdminEmployement
+from students.models import Student
+from professors.models import Professor
 
-from .utils import send_id_email, send_id_sms
+from .utils import send_contact_us_email, send_id_email, send_id_sms
 
 
 # ──────────────────────────────────────
@@ -36,6 +41,50 @@ def _check_admin_key(request):
     return None
 
 
+def _load_json_body(request):
+    try:
+        return json.loads(request.body), None
+    except json.JSONDecodeError:
+        return None, JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+
+# ──────────────────────────────────────
+# Public contact-us endpoint
+# ──────────────────────────────────────
+
+@csrf_exempt
+@require_POST
+def contact_us(request):
+    """Send a contact-us message from the admin access modal to the support inbox."""
+    data, error_response = _load_json_body(request)
+    if error_response:
+        return error_response
+
+    email = data.get("email", "").strip()
+    message = data.get("message", "").strip()
+
+    if not email:
+        return JsonResponse({"error": "'email' is required"}, status=400)
+    try:
+        validate_email(email)
+    except ValidationError:
+        return JsonResponse({"error": "Enter a valid email address"}, status=400)
+
+    if not message:
+        return JsonResponse({"error": "'message' is required"}, status=400)
+    if len(message) > 5000:
+        return JsonResponse({"error": "'message' must be 5000 characters or fewer"}, status=400)
+
+    result = send_contact_us_email(email, message)
+    if result["success"]:
+        return JsonResponse({"message": "Contact request sent successfully"}, status=200)
+
+    return JsonResponse(
+        {"error": "Failed to send contact request", "details": [result["error"]]},
+        status=500,
+    )
+
+
 # ──────────────────────────────────────
 # Student endpoint
 # ──────────────────────────────────────
@@ -48,10 +97,9 @@ def send_student_id(request):
     if auth_error:
         return auth_error
 
-    try:
-        data = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    data, error_response = _load_json_body(request)
+    if error_response:
+        return error_response
 
     personal_id = data.get("personal_id")
     channel = data.get("channel", "email").lower()
@@ -117,10 +165,9 @@ def send_professor_id(request):
     if auth_error:
         return auth_error
 
-    try:
-        data = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    data, error_response = _load_json_body(request)
+    if error_response:
+        return error_response
 
     personal_id = data.get("personal_id")
     channel = data.get("channel", "email").lower()

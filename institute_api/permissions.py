@@ -57,7 +57,6 @@ def get_verified_institute(request):
         institute = Institute.objects.only(
             'id',
             'admin_key',
-            'academic_terms_type',
             'event_status',
             'institute_name',
             'super_admin_name',

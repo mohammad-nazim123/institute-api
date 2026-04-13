@@ -1,9 +1,15 @@
 import re
 
+from django.db.models import Max
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import DefaultActivity
+from .models import (
+    ACADEMIC_TERMS_TYPE_SEMESTER,
+    ACADEMIC_TERMS_TYPE_YEAR,
+    AcademicTerm,
+    DefaultActivity,
+)
 
 
 SESSION_YEAR_LIMIT = 10
@@ -30,6 +36,13 @@ TIME_INPUT_FORMATS = (
     '%H:%M',
     '%H:%M:%S',
 )
+
+
+def normalize_academic_terms_type(value):
+    normalized_value = str(value or '').strip().lower()
+    if normalized_value in {ACADEMIC_TERMS_TYPE_YEAR, 'year wise', 'yearwise'}:
+        return ACADEMIC_TERMS_TYPE_YEAR
+    return ACADEMIC_TERMS_TYPE_SEMESTER
 
 
 def normalize_session_month(value):
@@ -79,6 +92,7 @@ class DefaultActivitySerializer(serializers.ModelSerializer):
     institute_name = serializers.CharField(source='institute.name', read_only=True)
     session_month = serializers.CharField(required=False)
     session_year = serializers.CharField(required=False)
+    academic_terms_type = serializers.CharField(required=False)
     opening_time = serializers.TimeField(
         format='%I:%M %p',
         input_formats=TIME_INPUT_FORMATS,
@@ -99,6 +113,7 @@ class DefaultActivitySerializer(serializers.ModelSerializer):
             'institute_name',
             'session_month',
             'session_year',
+            'academic_terms_type',
             'opening_time',
             'closing_time',
             'total_yearly_leaves',
@@ -119,6 +134,9 @@ class DefaultActivitySerializer(serializers.ModelSerializer):
 
     def validate_session_year(self, value):
         return normalize_session_year(value)
+
+    def validate_academic_terms_type(self, value):
+        return normalize_academic_terms_type(value)
 
     def validate(self, attrs):
         institute = self.context['institute']
@@ -158,3 +176,72 @@ class DefaultActivitySerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['institute'] = self.context['institute']
         return super().create(validated_data)
+
+
+class AcademicTermSerializer(serializers.ModelSerializer):
+    institute_name = serializers.CharField(source='institute.name', read_only=True)
+    sort_order = serializers.IntegerField(min_value=1, required=False)
+
+    class Meta:
+        model = AcademicTerm
+        fields = [
+            'id',
+            'institute',
+            'institute_name',
+            'name',
+            'sort_order',
+        ]
+        read_only_fields = (
+            'id',
+            'institute',
+            'institute_name',
+        )
+        validators = []
+
+    def validate_name(self, value):
+        normalized_value = str(value or '').strip()
+        if not normalized_value:
+            raise serializers.ValidationError('name is required.')
+        return normalized_value
+
+    def validate(self, attrs):
+        institute = self.context['institute']
+        request = self.context.get('request')
+
+        if request is not None and hasattr(request, 'data'):
+            request_institute = request.data.get('institute')
+            if (
+                request_institute not in (None, '')
+                and str(request_institute) != str(institute.id)
+            ):
+                raise serializers.ValidationError({
+                    'institute': ['Institute does not match the authenticated institute.'],
+                })
+
+        name = attrs.get('name', getattr(self.instance, 'name', ''))
+        queryset = AcademicTerm.objects.filter(institute=institute, name__iexact=name)
+        if self.instance is not None:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        if queryset.exists():
+            raise serializers.ValidationError({
+                'name': ['Academic term with this name already exists for this institute.'],
+            })
+
+        return attrs
+
+    def create(self, validated_data):
+        institute = self.context['institute']
+        if 'sort_order' not in validated_data:
+            last_sort_order = (
+                AcademicTerm.objects
+                .filter(institute=institute)
+                .aggregate(max_sort_order=Max('sort_order'))
+                .get('max_sort_order')
+            ) or 0
+            validated_data['sort_order'] = last_sort_order + 1
+
+        validated_data['institute'] = institute
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        return super().update(instance, validated_data)
