@@ -29,7 +29,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-change-me-in-production')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'False') == 'True'
+# DEBUG = os.getenv('DEBUG', 'False') == 'True'
+DEBUG = 'True'
+
 
 ALLOWED_HOSTS = ['*','localhost', '127.0.0.1', '.amazonaws.com','main.d3e0ptm41k0biu.amplifyapp.com',"educonnectz.in", "www.educonnectz.in"]
 APPEND_SLASH = False
