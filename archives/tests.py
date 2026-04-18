@@ -239,10 +239,13 @@ class ArchiveApiTests(TestCase):
             bank_name='State Bank',
             account_number='12345678',
             ifsc_code='SBIN0123456',
+            gross_amount='52000',
+            deducted_amount='2000',
             final_amount='50000',
             payment_month='2026-03',
             payment_date='2026-03-31',
             approved_leaves='2',
+            status='approved',
         )
         ProfessorAttendance.objects.create(
             institute=self.institute,
@@ -352,6 +355,18 @@ class ArchiveApiTests(TestCase):
         self.assertEqual(len(archived_professor['archived_data']['qualification']), 2)
         self.assertEqual(len(archived_professor['archived_data']['payments']), 1)
         self.assertEqual(len(archived_professor['archived_data']['marked_attendances']), 1)
+        self.assertEqual(
+            archived_professor['archived_data']['payment_notifications'][0]['gross_amount'],
+            '52000',
+        )
+        self.assertEqual(
+            archived_professor['archived_data']['payment_notifications'][0]['deducted_amount'],
+            '2000',
+        )
+        self.assertEqual(
+            archived_professor['archived_data']['payment_notifications'][0]['status'],
+            'approved',
+        )
 
         self.assertFalse(Professor.objects.filter(pk=self.professor.id).exists())
         self.assertFalse(ProfessorAddress.objects.filter(professor_id=self.professor.id).exists())

@@ -42,14 +42,6 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PAGINATION_CLASS': 'institute_api.pagination.StandardResultsPagination',
     'PAGE_SIZE': 50,
-    'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle',
-    ],
-    'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',
-        'user': '1000/hour',
-    },
 }
 
 SIMPLE_JWT = {
@@ -90,6 +82,7 @@ INSTALLED_APPS = [
     'super_admin_account_details',
     'employee_account_details',
     'payment_notification',
+    'data_analysis',
     'published_professors',
     'professor_leaves',
     'published_schedules',
@@ -228,6 +221,9 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 
 USE_TZ = True
+
+
+ATTENDANCE_DEADLINE = os.getenv('ATTENDANCE_DEADLINE', '10:00:00')
 
 
 # Static files (CSS, JavaScript, Images)

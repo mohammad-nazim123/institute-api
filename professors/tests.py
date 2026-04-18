@@ -6,7 +6,13 @@ from django.test.utils import CaptureQueriesContext
 from django.core.management import call_command
 from rest_framework.test import APIClient
 
+from activity_feed.models import ActivityEvent
+from attendance.models import AttendanceSubmission
 from iinstitutes_list.models import Institute
+from payments.models import ProfessorsPayments
+from professor_attendance.models import ProfessorAttendance
+from professor_leaves.models import ProfessorLeave as PublishedProfessorLeave
+from subordinate_access.models import SubordinateAccess
 
 from .models import (
     Professor,
@@ -417,3 +423,143 @@ class CreateDummyProfessorsCommandTests(TestCase):
             50,
         )
         self.assertIn('Created 50 dummy professors', output.getvalue())
+
+
+class CreateDummyBaHistoryFirstSemesterDemoCommandTests(TestCase):
+    def setUp(self):
+        self.institute = Institute.objects.create(
+            name='History Demo Institute',
+            admin_key='c' * 32,
+            event_status='active',
+        )
+
+    def test_command_creates_one_professor_with_attendance_payments_and_timed_student_submissions(self):
+        output = StringIO()
+
+        call_command(
+            'create_dummy_ba_history_first_semester_demo',
+            '--institute-id',
+            str(self.institute.id),
+            '--professor-count',
+            '1',
+            '--student-count',
+            '2',
+            '--attendance-days',
+            '365',
+            stdout=output,
+        )
+
+        professor = Professor.objects.get(institute=self.institute)
+
+        self.assertEqual(Professor.objects.filter(institute=self.institute).count(), 1)
+        self.assertTrue(
+            ProfessorAttendance.objects.filter(
+                institute=self.institute,
+                professor=professor,
+            ).exists()
+        )
+        self.assertEqual(
+            ProfessorAttendance.objects.filter(
+                institute=self.institute,
+                professor=professor,
+                attendance_time__isnull=True,
+            ).count(),
+            0,
+        )
+        self.assertEqual(
+            ProfessorsPayments.objects.filter(
+                institute=self.institute,
+                professor=professor,
+            ).count(),
+            12,
+        )
+        self.assertEqual(
+            ProfessorsPayments.objects.filter(
+                institute=self.institute,
+                professor=professor,
+                payment_status='paid',
+            ).count(),
+            12,
+        )
+        self.assertTrue(
+            PublishedProfessorLeave.objects.filter(
+                institute=self.institute,
+                published_professor__source_professor_id=professor.id,
+            ).exists()
+        )
+        self.assertGreater(
+            AttendanceSubmission.objects.filter(
+                institute=self.institute,
+                class_name='B.A',
+                branch='History',
+                year_semester='1st Semester',
+                marked_by=professor,
+            ).count(),
+            0,
+        )
+        self.assertEqual(
+            AttendanceSubmission.objects.filter(
+                institute=self.institute,
+                class_name='B.A',
+                branch='History',
+                year_semester='1st Semester',
+                attendance_time__isnull=True,
+            ).count(),
+            0,
+        )
+        self.assertTrue(
+            SubordinateAccess.objects.filter(
+                institute=self.institute,
+                access_control='admin access',
+                name='Demo Admin Employee',
+            ).exists()
+        )
+        self.assertTrue(
+            SubordinateAccess.objects.filter(
+                institute=self.institute,
+                access_control='fee access',
+                name='Demo Fee Employee',
+            ).exists()
+        )
+
+        activity_events = ActivityEvent.objects.filter(institute=self.institute)
+        admin_attendance_event = (
+            activity_events
+            .filter(actor_access_control='admin access', entity_type='professor attendance')
+            .order_by('id')
+            .first()
+        )
+        fee_event = (
+            activity_events
+            .filter(actor_access_control='fee access', entity_type='student fee')
+            .order_by('id')
+            .first()
+        )
+
+        self.assertIsNotNone(admin_attendance_event)
+        self.assertEqual(admin_attendance_event.details['task'], 'take_professor_attendance')
+        self.assertIn('present_count', admin_attendance_event.details)
+        self.assertIsNotNone(fee_event)
+        self.assertIn(
+            fee_event.details['task'],
+            {'student_fee_ledger_review', 'student_fee_collection'},
+        )
+
+        client = APIClient()
+        timeline_response = client.get(
+            (
+                f'/activity_feed/timeline/?institute={self.institute.id}'
+                f'&date={admin_attendance_event.occurred_at.date().isoformat()}'
+            ),
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+        self.assertEqual(timeline_response.status_code, 200)
+        fetched_tasks = {
+            item['details'].get('task')
+            for item in timeline_response.data['results']['timeline']
+        }
+        self.assertIn('take_professor_attendance', fetched_tasks)
+
+        self.assertIn('Created 1 dummy professors', output.getvalue())
+        self.assertIn('professor payment rows', output.getvalue())
+        self.assertIn('activity feed events', output.getvalue())

@@ -354,10 +354,13 @@ def build_professor_snapshot(professor):
                 'bank_name': notification.bank_name,
                 'account_number': notification.account_number,
                 'ifsc_code': notification.ifsc_code,
+                'gross_amount': notification.gross_amount,
+                'deducted_amount': notification.deducted_amount,
                 'final_amount': notification.final_amount,
                 'payment_month': notification.payment_month,
                 'payment_date': notification.payment_date,
                 'approved_leaves': notification.approved_leaves,
+                'status': notification.status,
                 'created_at': serialize_datetime(notification.created_at),
                 'updated_at': serialize_datetime(notification.updated_at),
             }

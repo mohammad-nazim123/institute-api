@@ -3,6 +3,7 @@ from collections import OrderedDict
 from activity_feed.services import ActivityLogMixin, log_activity
 
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.decorators import action
 from rest_framework.viewsets import ModelViewSet
 from .models import Student, StudentCourseAssignment, SubjectsAssigned
 from rest_framework.views import APIView
@@ -25,6 +26,15 @@ from iinstitutes_list.academic_terms import (
 from iinstitutes_list.models import Institute
 from institute_api.pagination import GracefulPageNumberPagination
 from django.db.models import Q
+from published_student.views import (
+    apply_student_publish_scope,
+    has_student_publish_scope,
+    get_publish_snapshot_parts,
+    get_published_student_existing_map,
+    get_student_publish_queryset,
+    get_student_publish_scope,
+    get_student_publish_status,
+)
 
 
 class StudentPagination(GracefulPageNumberPagination):
@@ -145,6 +155,26 @@ def build_student_list_payload(row):
     }
 
 
+def build_student_bulk_payload(student, publish_status, student_data):
+    return {
+        'id': student.id,
+        'institute': student.institute_id,
+        'name': student_data['name'],
+        'dob': student_data['dob'],
+        'gender': student_data['gender'],
+        'nationality': student_data['nationality'],
+        'identity': student_data['identity'],
+        'category': student_data['category'],
+        'education_details': student_data['education_details'],
+        'contact_details': student_data['contact_details'],
+        'admission_details': student_data['admission_details'],
+        'course_assignment': student_data['course_assignment'],
+        'fee_details': student_data['fee_details'],
+        'system_details': student_data['system_details'],
+        'publish_status': publish_status,
+    }
+
+
 def get_student_detail_queryset(institute=None):
     queryset = Student.objects.select_related(
         'institute',
@@ -199,6 +229,47 @@ def apply_student_filters(queryset, request):
     return queryset
 
 
+def apply_syllabus_context_filters(queryset, request):
+    institute = getattr(request, '_verified_institute', None)
+    class_name = (request.query_params.get('class_name') or '').strip()
+    branch = (request.query_params.get('branch') or '').strip()
+    academic_term = canonicalize_institute_academic_term(
+        institute,
+        (request.query_params.get('academic_term') or '').strip(),
+    )
+
+    if class_name:
+        queryset = queryset.filter(course_assignments__class_name__iexact=class_name)
+    if branch:
+        queryset = queryset.filter(course_assignments__branch__iexact=branch)
+    if academic_term:
+        queryset = filter_queryset_by_academic_term(
+            queryset,
+            'course_assignments__academic_term',
+            academic_term,
+            institute,
+        )
+
+    return queryset
+
+
+def apply_student_search_filter(queryset, search):
+    search = (search or '').strip()
+    if not search:
+        return queryset
+
+    return queryset.filter(
+        Q(name__icontains=search)
+        | Q(contact_details__email__icontains=search)
+        | Q(admission_details__enrollment_number__icontains=search)
+        | Q(admission_details__roll_number__icontains=search)
+        | Q(course_assignments__class_name__icontains=search)
+        | Q(course_assignments__branch__icontains=search)
+        | Q(course_assignments__academic_term__icontains=search)
+        | Q(system_details__student_personal_id__icontains=search)
+    )
+
+
 class StudentViewSet(ActivityLogMixin, InstituteDictResponseMixin, ModelViewSet):
     activity_entity_type = 'student'
     serializer_class = StudentSerializer
@@ -240,7 +311,7 @@ class StudentViewSet(ActivityLogMixin, InstituteDictResponseMixin, ModelViewSet)
         if not self._is_fee_access_request(request):
             return
 
-        if self.action in ('list',):
+        if self.action in ('list', 'bulk'):
             return
 
         if self.action == 'partial_update' and self._is_fee_only_patch(request):
@@ -301,6 +372,135 @@ class StudentViewSet(ActivityLogMixin, InstituteDictResponseMixin, ModelViewSet)
 
         serialized_data = [build_student_list_payload(row) for row in queryset]
         return Response([self._build_verified_institute_response(institute, serialized_data)])
+
+    @action(detail=False, methods=['get'], url_path='bulk')
+    def bulk(self, request, *args, **kwargs):
+        institute = request._verified_institute
+        scope = get_student_publish_scope(request.query_params, institute)
+        is_scoped = has_student_publish_scope(scope)
+        students = list(
+            apply_student_publish_scope(
+                get_student_publish_queryset(institute),
+                institute,
+                scope,
+            )
+        )
+        existing_map = get_published_student_existing_map(
+            institute,
+            [student.id for student in students] if is_scoped and students else None,
+        )
+
+        serialized_students = []
+        publish_counts = {'new': 0, 'update': 0, 'exist': 0}
+
+        for student in students:
+            student_data, subjects_data, student_personal_id = get_publish_snapshot_parts(student)
+            publish_status = get_student_publish_status(
+                existing_map.get(student.id),
+                student.name,
+                student_personal_id,
+                student_data,
+                subjects_data,
+            )
+            publish_counts[publish_status] += 1
+            serialized_students.append(
+                build_student_bulk_payload(student, publish_status, student_data)
+            )
+
+        return Response(
+            {
+                'id': institute.id,
+                'name': institute.name,
+                'count': len(serialized_students),
+                'students': serialized_students,
+                'publish_counts': publish_counts,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class SyllabusStudentsBulkView(APIView):
+    permission_classes = [InstituteKeyPermission]
+    allowed_subordinate_access_controls = (
+        ADMIN_ACCESS_CONTROL,
+        STUDENT_ACCESS_CONTROL,
+    )
+    page_size = 25
+    max_page_size = 200
+
+    def _get_positive_int_query_param(self, request, name, default):
+        raw_value = request.query_params.get(name)
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            return default
+
+        return value if value > 0 else default
+
+    def _get_page_bounds(self, request, count):
+        page_size = min(
+            self._get_positive_int_query_param(request, 'page_size', self.page_size),
+            self.max_page_size,
+        )
+        page = self._get_positive_int_query_param(request, 'page', 1)
+
+        if count > 0:
+            last_page = max(1, (count + page_size - 1) // page_size)
+            page = min(page, last_page)
+
+        start = (page - 1) * page_size
+        end = start + page_size
+        return page, page_size, start, end
+
+    def get(self, request):
+        institute = request._verified_institute
+        if not (request.query_params.get('class_name') or '').strip():
+            return Response(
+                {'detail': 'class_name query param is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        base_queryset = Student.objects.filter(institute=institute).order_by('id')
+        context_queryset = apply_syllabus_context_filters(base_queryset, request)
+        context_count = context_queryset.count()
+
+        search = (request.query_params.get('search') or '').strip()
+        filtered_queryset = apply_student_search_filter(context_queryset, search)
+        count = filtered_queryset.count() if search else context_count
+        page, page_size, start, end = self._get_page_bounds(request, count)
+        rows = list(filtered_queryset.values(*STUDENT_LIST_VALUE_FIELDS)[start:end])
+        student_ids = [row['id'] for row in rows]
+
+        subjects_by_student = {student_id: [] for student_id in student_ids}
+        if student_ids:
+            for subject in (
+                SubjectsAssigned.objects
+                .filter(student_id__in=student_ids)
+                .order_by('student_id', 'id')
+                .values('id', 'student_id', 'subject', 'unit')
+            ):
+                subjects_by_student[subject['student_id']].append({
+                    'id': subject['id'],
+                    'student': subject['student_id'],
+                    'subject': subject['subject'],
+                    'unit': subject['unit'],
+                })
+
+        students = []
+        for row in rows:
+            student_payload = build_student_list_payload(row)
+            student_payload['subjects_assigned'] = subjects_by_student.get(row['id'], [])
+            students.append(student_payload)
+
+        return Response({
+            'id': institute.id,
+            'name': institute.name,
+            'count': count,
+            'context_count': context_count,
+            'page': page,
+            'page_size': page_size,
+            'students': students,
+        }, status=status.HTTP_200_OK)
 
 
 class StudentIdLookUpViewSet(APIView):
@@ -413,6 +613,52 @@ class SubjectsAssignedView(APIView):
             return subjects
 
         return request.data
+
+    def _get_hierarchy_subject_items(self, request):
+        raw_subjects = request.data.get('subjects') if hasattr(request.data, 'get') else None
+        if raw_subjects is None:
+            subject = str(request.data.get('subject') or '').strip()
+            unit = str(request.data.get('unit') or '').strip()
+            errors = {}
+            if not subject:
+                errors['subject'] = ['This field is required.']
+            if not unit:
+                errors['unit'] = ['This field is required.']
+            return ([{'subject': subject, 'unit': unit}], errors)
+
+        if not isinstance(raw_subjects, list):
+            return None, {'subjects': ['Expected a list of subject objects.']}
+        if not raw_subjects:
+            return None, {'subjects': ['At least one subject is required.']}
+
+        subject_items = []
+        subject_errors = []
+        for item in raw_subjects:
+            item_errors = {}
+            if not isinstance(item, dict):
+                subject_errors.append({'non_field_errors': ['Each subject must be an object.']})
+                continue
+
+            subject = str(item.get('subject') or item.get('name') or '').strip()
+            unit = str(item.get('unit') or item.get('units') or '').strip()
+            if not subject:
+                item_errors['subject'] = ['This field is required.']
+            if not unit:
+                item_errors['unit'] = ['This field is required.']
+
+            subject_errors.append(item_errors)
+            if item_errors:
+                continue
+
+            subject_items.append({
+                'subject': subject,
+                'unit': unit,
+            })
+
+        if any(item_errors for item_errors in subject_errors):
+            return None, {'subjects': subject_errors}
+
+        return subject_items, None
 
     def _normalize_subject(self, subject):
         return ' '.join((subject or '').strip().lower().split())
@@ -617,8 +863,6 @@ class SubjectsAssignedView(APIView):
 
         institute = request._verified_institute
         payload = {
-            'subject': str(request.data.get('subject') or '').strip(),
-            'unit': str(request.data.get('unit') or '').strip(),
             'class_name': str(request.data.get('class_name') or '').strip(),
             'branch': str(request.data.get('branch') or '').strip(),
             'academic_term': canonicalize_institute_academic_term(
@@ -627,13 +871,20 @@ class SubjectsAssignedView(APIView):
             ),
         }
 
+        subject_items, subject_errors = self._get_hierarchy_subject_items(request)
         errors = {}
         for field, value in payload.items():
             if not value:
                 errors[field] = ['This field is required.']
+        if subject_errors:
+            errors.update(subject_errors)
 
         if errors:
             return None, errors
+
+        payload['subjects'] = subject_items
+        if len(subject_items) == 1:
+            payload.update(subject_items[0])
 
         return payload, None
 
@@ -749,6 +1000,7 @@ class SubjectsAssignedView(APIView):
                         'created_count': 0,
                         'already_assigned_count': 0,
                         'matched_students': 0,
+                        'assigned_subject_count': len(hierarchy_payload['subjects']),
                         'class_name': hierarchy_payload['class_name'],
                         'branch': hierarchy_payload['branch'],
                         'academic_term': hierarchy_payload['academic_term'],
@@ -756,32 +1008,44 @@ class SubjectsAssignedView(APIView):
                     status=status.HTTP_200_OK,
                 )
 
+            subject_items = hierarchy_payload['subjects']
             validated_items = [
                 {
                     'student': student_id,
-                    'subject': hierarchy_payload['subject'],
-                    'unit': hierarchy_payload['unit'],
+                    'subject': subject_item['subject'],
+                    'unit': subject_item['unit'],
                 }
                 for student_id in student_ids
+                for subject_item in subject_items
             ]
+            is_single_subject = len(subject_items) == 1
             return self._create_bulk_subject_assignments(
                 request,
                 validated_items,
-                created_detail='Assigned subject to {created_count} students.',
-                no_changes_detail='Subject is already assigned to all matching students.',
+                created_detail=(
+                    'Assigned subject to {created_count} students.'
+                    if is_single_subject
+                    else 'Assigned subjects to {created_count} student-subject rows.'
+                ),
+                no_changes_detail=(
+                    'Subject is already assigned to all matching students.'
+                    if is_single_subject
+                    else 'Subjects are already assigned to all matching students.'
+                ),
                 allow_no_changes_success=True,
                 extra_response_payload={
                     'matched_students': len(student_ids),
+                    'assigned_subject_count': len(subject_items),
                     'class_name': hierarchy_payload['class_name'],
                     'branch': hierarchy_payload['branch'],
                     'academic_term': hierarchy_payload['academic_term'],
                 },
                 extra_log_details={
                     'matched_students': len(student_ids),
+                    'assigned_subject_count': len(subject_items),
                     'class_name': hierarchy_payload['class_name'],
                     'branch': hierarchy_payload['branch'],
                     'academic_term': hierarchy_payload['academic_term'],
-                    'unit': hierarchy_payload['unit'],
                 },
             )
 

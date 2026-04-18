@@ -1,7 +1,6 @@
 from collections import OrderedDict
 
 from activity_feed.services import ActivityLogMixin, log_activity
-from django.db import IntegrityError
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -160,105 +159,39 @@ class ProfessorPaymentUpsertView(APIView):
             if field in request.data:
                 updates[field] = request.data.get(field)
 
-        payment = ProfessorsPayments.objects.filter(
-            institute_id=institute.id,
-            professor_id=professor_id,
-            month_year=month_year,
-        ).values(
-            'id',
-            'payment_date',
-            'payment_amount',
-            'payment_status',
-        ).first()
-
-        if payment is not None:
-            payment_fields.update(payment)
-            payment_fields.update(updates)
-            if updates:
-                ProfessorsPayments.objects.filter(pk=payment['id']).update(**updates)
-                log_activity(
-                    request,
-                    action='update',
-                    entity_type='professor payment',
-                    entity_id=payment['id'],
-                    entity_name=month_year,
-                    description=f"Professor payment for {month_year} was updated.",
-                    details={'professor_id': professor_id, 'month_year': month_year, 'fields': sorted(updates.keys())},
-                )
-            return Response(
-                self._payment_payload(
-                    payment['id'],
-                    institute.id,
-                    professor_id,
-                    month_year,
-                    payment_fields,
-                ),
-                status=status.HTTP_200_OK,
-            )
-
         if not Professor.objects.filter(pk=professor_id, institute_id=institute.id).exists():
             return Response(
                 {'detail': 'Professor not found in the authenticated institute.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        create_fields = {
-            'institute_id': institute.id,
-            'professor_id': professor_id,
-            'month_year': month_year,
-            **payment_fields,
-            **updates,
-        }
-
-        try:
-            payment = ProfessorsPayments.objects.create(**create_fields)
-        except IntegrityError:
-            payment = ProfessorsPayments.objects.filter(
-                institute_id=institute.id,
-                professor_id=professor_id,
-                month_year=month_year,
-            ).values(
-                'id',
-                'payment_date',
-                'payment_amount',
-                'payment_status',
-            ).first()
-            if payment is None:
-                raise
-
-            payment_fields.update(payment)
-            payment_fields.update(updates)
-            if updates:
-                ProfessorsPayments.objects.filter(pk=payment['id']).update(**updates)
-                log_activity(
-                    request,
-                    action='update',
-                    entity_type='professor payment',
-                    entity_id=payment['id'],
-                    entity_name=month_year,
-                    description=f"Professor payment for {month_year} was updated.",
-                    details={'professor_id': professor_id, 'month_year': month_year, 'fields': sorted(updates.keys())},
-                )
-            return Response(
-                self._payment_payload(
-                    payment['id'],
-                    institute.id,
-                    professor_id,
-                    month_year,
-                    payment_fields,
-                ),
-                status=status.HTTP_200_OK,
-            )
-
-        log_activity(
-            request,
-            action='create',
-            entity_type='professor payment',
-            entity_id=payment.id,
-            entity_name=month_year,
-            description=f"Professor payment for {month_year} was created.",
-            details={'professor_id': professor_id, 'month_year': month_year, 'fields': sorted(updates.keys())},
+        payment, created = ProfessorsPayments.objects.update_or_create(
+            institute_id=institute.id,
+            professor_id=professor_id,
+            month_year=month_year,
+            defaults={**payment_fields, **updates} if not updates else updates,
         )
+
+        if created:
+            log_activity(
+                request,
+                action='create',
+                entity_type='professor payment',
+                entity_id=payment.id,
+                entity_name=month_year,
+                description=f"Professor payment for {month_year} was created.",
+                details={'professor_id': professor_id, 'month_year': month_year, 'fields': sorted(updates.keys())},
+            )
+        elif updates:
+            log_activity(
+                request,
+                action='update',
+                entity_type='professor payment',
+                entity_id=payment.id,
+                entity_name=month_year,
+                description=f"Professor payment for {month_year} was updated.",
+                details={'professor_id': professor_id, 'month_year': month_year, 'fields': sorted(updates.keys())},
+            )
 
         return Response(
             self._payment_payload(

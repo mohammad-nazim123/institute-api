@@ -4,7 +4,12 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Prefetch
 from .models import Institute
-from .serializers import InstituteSerializer, InstituteDetailSerializer, InstituteVerifySerializer
+from .serializers import (
+    InstituteSerializer,
+    InstituteDetailSerializer,
+    InstituteSummarySerializer,
+    InstituteVerifySerializer,
+)
 from professors.models import Professor
 from students.models import Student
 from syllabus.models import AcademicTerms, Branch, Course, Subject
@@ -81,12 +86,31 @@ def get_institute_detail_queryset():
 class InstituteViewSet(ModelViewSet):
     serializer_class = InstituteSerializer
 
+    def _uses_summary_response(self):
+        return str(self.request.query_params.get('summary', '')).strip().lower() in {
+            '1',
+            'true',
+            'yes',
+        }
+
     def get_queryset(self):
+        if self.action in ['list', 'retrieve'] and self._uses_summary_response():
+            return Institute.objects.only(
+                'id',
+                'institute_name',
+                'super_admin_name',
+                'event_status',
+                'event_timer_end',
+            ).order_by('id')
+
         if self.action in ['list', 'retrieve']:
             return get_institute_detail_queryset()
         return Institute.objects.all()
 
     def get_serializer_class(self):
+        if self.action in ['list', 'retrieve'] and self._uses_summary_response():
+            return InstituteSummarySerializer
+
         if self.action in ['list', 'retrieve']:
             return InstituteDetailSerializer
         return InstituteSerializer
@@ -119,13 +143,21 @@ class InstituteVerifyView(APIView):
             'is_active': subordinate.is_active,
         }
 
-    def _approved_subordinate_response(self, institute, subordinate):
+    def _institute_summary_payload(self, institute):
+        return InstituteSummarySerializer(institute).data
+
+    def _approved_subordinate_response(self, institute, subordinate, *, include_detail=True):
+        if not include_detail:
+            data = self._institute_summary_payload(institute)
+            data['subordinate_access'] = self._subordinate_payload(subordinate)
+            return Response(data, status=status.HTTP_200_OK)
+
         detail_institute = get_institute_detail_queryset().get(pk=institute.pk)
         data = InstituteDetailSerializer(detail_institute).data
         data['subordinate_access'] = self._subordinate_payload(subordinate)
         return Response(data, status=status.HTTP_200_OK)
 
-    def _handle_subordinate_login(self, institute, admin_key):
+    def _handle_subordinate_login(self, institute, admin_key, *, include_detail=True):
         subordinate = (
             SubordinateAccess.objects
             .filter(institute=institute, access_code=admin_key)
@@ -139,7 +171,11 @@ class InstituteVerifyView(APIView):
             )
 
         if subordinate.is_active:
-            return self._approved_subordinate_response(institute, subordinate)
+            return self._approved_subordinate_response(
+                institute,
+                subordinate,
+                include_detail=include_detail,
+            )
 
         return Response(
             {
@@ -156,11 +192,17 @@ class InstituteVerifyView(APIView):
         institute_name = serializer.validated_data['institute_name']
         super_admin_name = serializer.validated_data.get('super_admin_name', '')
         admin_key = serializer.validated_data['admin_key']
+        include_detail = serializer.validated_data.get('include_detail', True)
 
         if len(admin_key) == 32:
             try:
                 institute = Institute.objects.only(
-                    'id', 'institute_name', 'super_admin_name', 'admin_key'
+                    'id',
+                    'institute_name',
+                    'super_admin_name',
+                    'admin_key',
+                    'event_status',
+                    'event_timer_end',
                 ).get(institute_name=institute_name)
             except Institute.DoesNotExist:
                 return Response(
@@ -180,12 +222,21 @@ class InstituteVerifyView(APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
+            if not include_detail:
+                return Response(self._institute_summary_payload(institute))
+
             detail_institute = get_institute_detail_queryset().get(pk=institute.pk)
             detail_serializer = InstituteDetailSerializer(detail_institute)
             return Response(detail_serializer.data)
 
         try:
-            institute = Institute.objects.only('id', 'institute_name', 'super_admin_name').get(
+            institute = Institute.objects.only(
+                'id',
+                'institute_name',
+                'super_admin_name',
+                'event_status',
+                'event_timer_end',
+            ).get(
                 institute_name=institute_name
             )
         except Institute.DoesNotExist:
@@ -195,7 +246,11 @@ class InstituteVerifyView(APIView):
             )
 
         if len(admin_key) in {29, 30, 31}:
-            return self._handle_subordinate_login(institute, admin_key)
+            return self._handle_subordinate_login(
+                institute,
+                admin_key,
+                include_detail=include_detail,
+            )
 
         return Response(
             {'detail': 'Invalid institute name or admin key.'},

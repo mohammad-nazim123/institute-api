@@ -12,12 +12,17 @@ function getLocalDateString(value) {
   return `${year}-${month}-${day}`;
 }
 
-function buildActivityTimelineUrl({ baseUrl, instituteId, page = 1, date }) {
+function buildActivityTimelineUrl({ baseUrl, instituteId, page = 1, date, all = false }) {
   const params = new URLSearchParams({
     institute: `${instituteId}`,
     page: `${page}`,
-    date: getLocalDateString(date),
   });
+
+  if (all) {
+    params.set("all", "true");
+  } else {
+    params.set("date", getLocalDateString(date));
+  }
 
   return `${baseUrl.replace(/\/$/, "")}/activity_feed/timeline/?${params.toString()}`;
 }
@@ -38,15 +43,17 @@ export async function fetchActivityFeedPage({
   adminKey,
   page = 1,
   date,
+  all = false,
   signal,
 }) {
-  const resolvedDate = getLocalDateString(date);
+  const resolvedDate = all ? "all" : getLocalDateString(date);
   const response = await fetch(
     buildActivityTimelineUrl({
       baseUrl,
       instituteId,
       page,
-      date: resolvedDate,
+      date,
+      all,
     }),
     {
       method: "GET",
@@ -70,6 +77,7 @@ export async function fetchActivityFeedPage({
     institute,
     activities: institute.timeline || [],
     selectedDate: institute.date || resolvedDate,
+    scope: institute.scope || (all ? "all" : "date"),
     pagination: {
       count: payload.count || 0,
       page: payload.page || page,
@@ -126,6 +134,7 @@ export function useActivityFeedPage(options) {
     };
   }, [
     options.adminKey,
+    options.all,
     options.baseUrl,
     options.date,
     options.instituteId,

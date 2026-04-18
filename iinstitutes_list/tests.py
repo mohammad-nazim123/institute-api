@@ -183,6 +183,49 @@ class InstituteDetailApiTests(TestCase):
         self.assertNotIn('academic_terms', response.data)
         self.assertLessEqual(len(queries), 8)
 
+    def test_verify_can_return_lightweight_identity_payload(self):
+        response = self.client.post(
+            '/institutes/verify/',
+            data={
+                'institute_name': self.institute.institute_name,
+                'super_admin_name': self.institute.super_admin_name,
+                'admin_key': self.institute.admin_key,
+                'include_detail': False,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['id'], self.institute.id)
+        self.assertEqual(response.data['name'], 'Alpha Institute')
+        self.assertEqual(response.data['institute_name'], 'Alpha Institute')
+        self.assertEqual(response.data['super_admin_name'], 'Primary Super Admin')
+        self.assertNotIn('students', response.data)
+        self.assertNotIn('professors', response.data)
+        self.assertNotIn('courses', response.data)
+
+    def test_summary_retrieve_returns_lightweight_identity_payload(self):
+        response = self.client.get(f'/institutes/institute/{self.institute.id}/?summary=1')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.data[0]
+        self.assertEqual(payload['id'], self.institute.id)
+        self.assertEqual(payload['name'], 'Alpha Institute')
+        self.assertEqual(payload['institute_name'], 'Alpha Institute')
+        self.assertNotIn('students', payload)
+        self.assertNotIn('professors', payload)
+        self.assertNotIn('courses', payload)
+
+    def test_summary_list_returns_lightweight_identity_payloads(self):
+        response = self.client.get('/institutes/institute/?summary=1')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 2)
+        self.assertEqual(response.data[0]['name'], 'Alpha Institute')
+        self.assertNotIn('students', response.data[0])
+        self.assertNotIn('professors', response.data[0])
+        self.assertNotIn('courses', response.data[0])
+
     def test_verify_rejects_when_super_admin_name_does_not_match(self):
         response = self.client.post(
             '/institutes/verify/',

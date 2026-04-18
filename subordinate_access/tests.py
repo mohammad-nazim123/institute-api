@@ -246,6 +246,35 @@ class SubordinateAccessApiTests(APITestCase):
         self.assertEqual(login_response.data['subordinate_access']['name'], 'Rahul')
         self.assertTrue(login_response.data['subordinate_access']['is_active'])
 
+    def test_approved_subordinate_can_login_with_lightweight_verify_response(self):
+        subordinate = SubordinateAccess.objects.create(
+            institute=self.institute,
+            post='Coordinator',
+            name='Rahul',
+            access_control='student-management',
+            access_code='R' * 29,
+            is_active=True,
+        )
+
+        login_response = self.client.post(
+            reverse('institute-verify'),
+            data={
+                'name': self.institute.name,
+                'admin_key': subordinate.access_code,
+                'include_detail': False,
+            },
+            format='json',
+        )
+
+        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(login_response.data['id'], self.institute.id)
+        self.assertEqual(login_response.data['name'], self.institute.name)
+        self.assertEqual(login_response.data['subordinate_access']['name'], 'Rahul')
+        self.assertTrue(login_response.data['subordinate_access']['is_active'])
+        self.assertNotIn('students', login_response.data)
+        self.assertNotIn('professors', login_response.data)
+        self.assertNotIn('courses', login_response.data)
+
     def test_deactive_subordinate_returns_clear_error_from_institute_verify(self):
         SubordinateAccess.objects.create(
             institute=self.institute,

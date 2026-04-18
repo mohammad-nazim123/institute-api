@@ -115,6 +115,115 @@ class PublishedProfessorApiTests(TestCase):
             'PROF00000000001',
         )
 
+    def test_professor_bulk_list_returns_unpaginated_professors_and_filters_department(self):
+        second_professor = self.create_professor(
+            name='Dr Ada',
+            email='ada@example.com',
+            personal_id='PROF00000000002',
+            employee_id='EMP-2',
+            department='AI',
+        )
+
+        response = self.client.get(
+            f'/professors/professors/bulk/?institute={self.institute.id}',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['id'], self.institute.id)
+        self.assertEqual(
+            {professor['id'] for professor in response.data['professors']},
+            {self.professor.id, second_professor.id},
+        )
+
+        filtered_response = self.client.get(
+            f'/professors/professors/bulk/?institute={self.institute.id}&department=AI',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(filtered_response.status_code, 200)
+        self.assertEqual(len(filtered_response.data['professors']), 1)
+        self.assertEqual(filtered_response.data['professors'][0]['id'], second_professor.id)
+
+    def test_selected_bulk_publish_creates_only_requested_professors(self):
+        second_professor = self.create_professor(
+            name='Dr Ada',
+            email='ada@example.com',
+            personal_id='PROF00000000002',
+            employee_id='EMP-2',
+            department='AI',
+        )
+
+        response = self.client.post(
+            f'/published_professors/?institute={self.institute.id}',
+            data={'professor_ids': [self.professor.id]},
+            format='json',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['created_count'], 1)
+        self.assertEqual(response.data['updated_count'], 0)
+        self.assertEqual(response.data['already_exists_count'], 0)
+        self.assertEqual(response.data['deleted_count'], 0)
+        self.assertEqual(len(response.data['published_professors']), 1)
+        self.assertTrue(
+            PublishedProfessor.objects.filter(
+                institute=self.institute,
+                source_professor_id=self.professor.id,
+            ).exists()
+        )
+        self.assertFalse(
+            PublishedProfessor.objects.filter(
+                institute=self.institute,
+                source_professor_id=second_professor.id,
+            ).exists()
+        )
+
+    def test_selected_bulk_publish_updates_skips_and_preserves_unselected_rows(self):
+        second_professor = self.create_professor(
+            name='Dr Ada',
+            email='ada@example.com',
+            personal_id='PROF00000000002',
+            employee_id='EMP-2',
+            department='AI',
+        )
+        self.publish_all()
+
+        self.professor.name = 'Dr Robert'
+        self.professor.save(update_fields=['name'])
+
+        response = self.client.post(
+            f'/published_professors/?institute={self.institute.id}',
+            data={'professor_ids': [self.professor.id, second_professor.id]},
+            format='json',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['created_count'], 0)
+        self.assertEqual(response.data['updated_count'], 1)
+        self.assertEqual(response.data['already_exists_count'], 1)
+        self.assertEqual(response.data['deleted_count'], 0)
+        self.assertEqual(response.data['already_exists_professor_ids'], [second_professor.id])
+        self.assertEqual(
+            PublishedProfessor.objects.filter(institute=self.institute).count(),
+            2,
+        )
+        self.assertTrue(
+            PublishedProfessor.objects.filter(
+                institute=self.institute,
+                source_professor_id=second_professor.id,
+            ).exists()
+        )
+        self.assertEqual(
+            PublishedProfessor.objects.get(
+                institute=self.institute,
+                source_professor_id=self.professor.id,
+            ).name,
+            'Dr Robert',
+        )
+
     def test_publish_single_professor_returns_already_available_when_unchanged(self):
         first_response = self.client.post(
             f'/published_professors/?institute={self.institute.id}&professor_id={self.professor.id}',

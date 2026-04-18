@@ -133,6 +133,42 @@ class ActivityTimelinePaginationTests(APITestCase):
             ],
         )
 
+    def test_timeline_can_return_all_dates_when_requested(self):
+        response = self.client.get(
+            f'{self.url}?institute={self.institute.id}&all=true&page=2',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 28)
+        self.assertEqual(response.data['page'], 2)
+        self.assertEqual(response.data['total_pages'], 2)
+        self.assertEqual(response.data['results']['scope'], 'all')
+        self.assertEqual(response.data['results']['date'], 'all')
+        self.assertEqual(
+            [item['title'] for item in response.data['results']['timeline']],
+            [
+                'Today Activity 21',
+                'Today Activity 22',
+                'Today Activity 23',
+                'Today Activity 24',
+                'Today Activity 25',
+                'Yesterday Activity 1',
+                'Yesterday Activity 2',
+                'Yesterday Activity 3',
+            ],
+        )
+
+    def test_timeline_accepts_date_all_alias(self):
+        response = self.client.get(
+            f'{self.url}?institute={self.institute.id}&date=all',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 28)
+        self.assertEqual(response.data['results']['scope'], 'all')
+
     def test_timeline_returns_empty_state_for_out_of_range_page_when_date_has_no_events(self):
         empty_date = (self.today + timedelta(days=7)).isoformat()
 

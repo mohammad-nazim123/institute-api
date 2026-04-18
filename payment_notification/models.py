@@ -21,11 +21,18 @@ payment_month_validator = RegexValidator(
 
 
 class PaymentNotification(EncryptedFieldsMixin, models.Model):
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        APPROVED = 'approved', 'Approved'
+        REJECTED = 'rejected', 'Rejected'
+
     ENCRYPTED_FIELDS = (
         'account_holder_name',
         'bank_name',
         'account_number',
         'ifsc_code',
+        'gross_amount',
+        'deducted_amount',
         'final_amount',
         'payment_month',
         'payment_date',
@@ -56,10 +63,17 @@ class PaymentNotification(EncryptedFieldsMixin, models.Model):
         max_length=1024,
         validators=[ifsc_validator],
     )
+    gross_amount = models.CharField(max_length=1024, default='0')
+    deducted_amount = models.CharField(max_length=1024, default='0')
     final_amount = models.CharField(max_length=1024)
     payment_month = models.CharField(max_length=1024)
     payment_date = models.CharField(max_length=1024)
     approved_leaves = models.CharField(max_length=1024)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -73,6 +87,7 @@ class PaymentNotification(EncryptedFieldsMixin, models.Model):
         indexes = [
             models.Index(fields=['institute', 'payment_month_key'], name='pay_note_inst_month_idx'),
             models.Index(fields=['institute', 'professor'], name='pay_note_inst_prof_idx'),
+            models.Index(fields=['institute', 'status'], name='pay_note_inst_status_idx'),
         ]
         ordering = ['-payment_month_key', 'id']
 
@@ -82,10 +97,14 @@ class PaymentNotification(EncryptedFieldsMixin, models.Model):
         self.bank_name = self.bank_name.strip()
         self.account_number = self.account_number.strip()
         self.ifsc_code = self.ifsc_code.strip().upper()
+        self.gross_amount = str(self.gross_amount).strip()
+        self.deducted_amount = str(self.deducted_amount).strip()
         self.final_amount = str(self.final_amount).strip()
         self.payment_month = str(self.payment_month).strip()
         self.payment_date = str(self.payment_date).strip()
         self.approved_leaves = str(self.approved_leaves).strip()
+        normalized_status = str(self.status or self.Status.PENDING).strip().lower()
+        self.status = normalized_status or self.Status.PENDING
         originals = self._encrypt_encrypted_fields()
         try:
             super().save(*args, **kwargs)

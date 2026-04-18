@@ -6,6 +6,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from institute_api.pagination import StandardResultsPagination
 from institute_api.permissions import ADMIN_ACCESS_CONTROL, AttendancePermission
 from professors.models import Professor, ProfessorQualification
 
@@ -90,6 +91,11 @@ class ProfessorListView(APIView):
             .annotate(primary_specialization=Subquery(first_specialization_subquery('pk')))
             .order_by('id')
         )
+        paginator = StandardResultsPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        if page is not None:
+            serializer = ProfessorDirectorySerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
         serializer = ProfessorDirectorySerializer(queryset, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 

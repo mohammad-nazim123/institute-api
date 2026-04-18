@@ -32,7 +32,7 @@ class PublishedStudentApiTests(TestCase):
             academic_term='1st semester',
         )
 
-    def create_student(self, name, email, personal_id, academic_term):
+    def create_student(self, name, email, personal_id, academic_term, class_name='B.Tech', branch='CS'):
         student = Student.objects.create(
             institute=self.institute,
             name=name,
@@ -68,8 +68,8 @@ class PublishedStudentApiTests(TestCase):
         )
         StudentCourseAssignment.objects.create(
             student=student,
-            class_name='B.Tech',
-            branch='CS',
+            class_name=class_name,
+            branch=branch,
             academic_term=academic_term,
         )
         StudentFeeDetails.objects.create(
@@ -94,6 +94,20 @@ class PublishedStudentApiTests(TestCase):
     def publish_all(self):
         return self.client.post(
             f'/published_students/?institute={self.institute.id}',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+    def publish_scoped(self, query):
+        return self.client.post(
+            f'/published_students/?institute={self.institute.id}&{query}',
+            HTTP_X_ADMIN_KEY=self.institute.admin_key,
+        )
+
+    def publish_selected(self, student_ids, query=''):
+        student_ids_query = ','.join(str(student_id) for student_id in student_ids)
+        query_suffix = f'&{query}' if query else ''
+        return self.client.post(
+            f'/published_students/?institute={self.institute.id}&student_ids={student_ids_query}{query_suffix}',
             HTTP_X_ADMIN_KEY=self.institute.admin_key,
         )
 
@@ -188,7 +202,7 @@ class PublishedStudentApiTests(TestCase):
             response = self.publish_all()
 
         self.assertEqual(response.status_code, 200)
-        self.assertLessEqual(len(queries), 6)
+        self.assertLessEqual(len(queries), 7)
 
     def test_fetch_by_student_id_requires_15_char_header_and_returns_institute_dict(self):
         self.publish_all()
@@ -265,4 +279,145 @@ class PublishedStudentApiTests(TestCase):
         self.assertEqual(
             response.data['published_students'][0]['subjects_assigned'][0]['subject'],
             'Chemistry',
+        )
+
+    def test_scoped_publish_syncs_only_requested_scope_without_deleting_other_scope(self):
+        history_student = self.create_student(
+            name='History Bob',
+            email='history@example.com',
+            personal_id='STUDENT-0000002',
+            academic_term='1st semester',
+            class_name='B.A',
+            branch='History',
+        )
+        physics_student = self.create_student(
+            name='Physics Carol',
+            email='physics@example.com',
+            personal_id='STUDENT-0000003',
+            academic_term='1st semester',
+            class_name='B.Sc',
+            branch='Physics',
+        )
+        PublishedStudent.objects.create(
+            institute=self.institute,
+            source_student_id=physics_student.id,
+            name=physics_student.name,
+            student_personal_id='STUDENT-0000003',
+            student_data={'id': physics_student.id, 'name': physics_student.name},
+            subjects_assigned=[],
+        )
+
+        response = self.publish_scoped('class_name=B.A&branch=History&academic_term=1st semester')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['created_count'], 1)
+        self.assertEqual(response.data['updated_count'], 0)
+        self.assertEqual(response.data['deleted_count'], 0)
+        self.assertEqual(response.data['created_student_ids'], [history_student.id])
+        self.assertTrue(
+            PublishedStudent.objects.filter(
+                institute=self.institute,
+                source_student_id=physics_student.id,
+            ).exists()
+        )
+
+    def test_scoped_publish_returns_updated_and_existing_student_ids(self):
+        history_student = self.create_student(
+            name='History Bob',
+            email='history@example.com',
+            personal_id='STUDENT-0000002',
+            academic_term='1st semester',
+            class_name='B.A',
+            branch='History',
+        )
+        self.publish_scoped('class_name=B.A&branch=History&academic_term=1st semester')
+
+        history_student.contact_details.email = 'history-updated@example.com'
+        history_student.contact_details.save(update_fields=['email'])
+
+        response = self.publish_scoped('class_name=B.A&branch=History&academic_term=1st semester')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['created_count'], 0)
+        self.assertEqual(response.data['updated_count'], 1)
+        self.assertEqual(response.data['already_exists_count'], 0)
+        self.assertEqual(response.data['updated_student_ids'], [history_student.id])
+
+        third_response = self.publish_scoped('class_name=B.A&branch=History&academic_term=1st semester')
+        self.assertEqual(third_response.status_code, 200)
+        self.assertEqual(third_response.data['updated_count'], 0)
+        self.assertEqual(third_response.data['already_exists_count'], 1)
+        self.assertEqual(third_response.data['already_exists_student_ids'], [history_student.id])
+
+    def test_selected_student_publish_only_syncs_checked_students(self):
+        other_student = self.create_student(
+            name='Bob',
+            email='bob@example.com',
+            personal_id='STUDENT-0000002',
+            academic_term='2nd semester',
+        )
+
+        response = self.publish_selected([other_student.id])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['created_count'], 1)
+        self.assertEqual(response.data['created_student_ids'], [other_student.id])
+        self.assertFalse(
+            PublishedStudent.objects.filter(
+                institute=self.institute,
+                source_student_id=self.student.id,
+            ).exists()
+        )
+        self.assertTrue(
+            PublishedStudent.objects.filter(
+                institute=self.institute,
+                source_student_id=other_student.id,
+            ).exists()
+        )
+
+    def test_selected_student_publish_does_not_delete_other_published_rows(self):
+        other_student = self.create_student(
+            name='Bob',
+            email='bob@example.com',
+            personal_id='STUDENT-0000002',
+            academic_term='2nd semester',
+        )
+        self.publish_all()
+
+        response = self.publish_selected([other_student.id])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['deleted_count'], 0)
+        self.assertTrue(
+            PublishedStudent.objects.filter(
+                institute=self.institute,
+                source_student_id=self.student.id,
+            ).exists()
+        )
+        self.assertTrue(
+            PublishedStudent.objects.filter(
+                institute=self.institute,
+                source_student_id=other_student.id,
+            ).exists()
+        )
+
+    def test_unscoped_publish_keeps_full_sync_delete_behavior(self):
+        stale_snapshot = PublishedStudent.objects.create(
+            institute=self.institute,
+            source_student_id=999999,
+            name='Stale Student',
+            student_personal_id='STALE-STUDENT-01',
+            student_data={'id': 999999, 'name': 'Stale Student'},
+            subjects_assigned=[],
+        )
+
+        response = self.publish_all()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['deleted_count'], 1)
+        self.assertFalse(
+            PublishedStudent.objects.filter(
+                institute=self.institute,
+                id=stale_snapshot.id,
+            ).exists()
         )

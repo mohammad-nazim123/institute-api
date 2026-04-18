@@ -1,3 +1,5 @@
+from collections import OrderedDict, defaultdict
+
 from rest_framework import status
 
 from activity_feed.services import log_activity
@@ -14,6 +16,13 @@ from iinstitutes_list.academic_terms import (
     canonicalize_institute_academic_term,
     filter_queryset_by_academic_term,
 )
+from published_schedules.models import (
+    PublishedExamSchedule,
+    PublishedWeeklySchedule,
+)
+from professors.models import Professor
+from syllabus.models import Course
+from syllabus.serializers import CourseSerializer
 
 from .models import (
     ExamScheduleData,
@@ -100,6 +109,19 @@ class WeeklyExamScheduleMixin:
     def _dictionary_response(self, institute, hierarchy):
         return Response(self._dictionary_payload(institute, hierarchy))
 
+    def _published_queryset(self, model, institute, hierarchy):
+        queryset = model.objects.filter(
+            institute=institute,
+            class_name=hierarchy['class_name'],
+            branch=hierarchy['branch'],
+        )
+        return filter_queryset_by_academic_term(
+            queryset,
+            'academic_term',
+            hierarchy['academic_term'],
+            institute,
+        )
+
     def _hierarchy_from_child(self, child):
         return {
             'class_name': child.class_name,
@@ -142,6 +164,220 @@ class WeeklyExamScheduleDictionaryView(WeeklyExamScheduleMixin, APIView):
         institute = request._verified_institute
         hierarchy = self._require_hierarchy(request)
         return self._dictionary_response(institute, hierarchy)
+
+
+class WeeklyExamScheduleBulkView(WeeklyExamScheduleMixin, APIView):
+    """Return all schedule contexts for an institute in a single request.
+
+    Uses exactly 2 DB queries (one for weekly, one for exam data) and
+    groups the results by (class_name, branch, academic_term) in Python.
+    Response shape::
+
+        {
+          "schedules": [
+            {
+              "instutes": "...",
+              "id": 1,
+              "class": "B.Tech",
+              "branch": "CS",
+              "acedemic_terms": "Semester 1st",
+              "Weekly_schedule": [...],
+              "exam_schedule": [...]
+            },
+            ...
+          ]
+        }
+    """
+
+    def get(self, request):
+        institute = request._verified_institute
+
+        # ── 1 query: all weekly data for the institute ────────────────
+        weekly_qs = (
+            WeeklyScheduleData.objects
+            .select_related('weekly_schedule_day')
+            .filter(institute=institute)
+            .order_by('class_name', 'branch', 'academic_term', 'weekly_schedule_day_id', 'id')
+        )
+
+        # ── 1 query: all exam data for the institute ──────────────────
+        exam_qs = (
+            ExamScheduleData.objects
+            .select_related('exam_schedule_date')
+            .filter(institute=institute)
+            .order_by('class_name', 'branch', 'academic_term', 'exam_schedule_date_id', 'id')
+        )
+
+        # ── Group weekly data by context key ──────────────────────────
+        # context_key -> {day_id -> OrderedDict schedule_day}
+        weekly_by_context = defaultdict(dict)
+        for item in weekly_qs:
+            ctx_key = (item.class_name, item.branch, item.academic_term)
+            day = item.weekly_schedule_day
+            days_map = weekly_by_context[ctx_key]
+            if day.id not in days_map:
+                days_map[day.id] = OrderedDict([
+                    ('id', day.id),
+                    ('day', day.day),
+                    ('weekly_schedule_data', []),
+                ])
+            days_map[day.id]['weekly_schedule_data'].append(OrderedDict([
+                ('id', item.id),
+                ('start_time', item.start_time.isoformat()),
+                ('end_time', item.end_time.isoformat()),
+                ('subject', item.subject),
+                ('room_number', item.room_number),
+                ('professor', item.professor),
+            ]))
+
+        # ── Group exam data by context key ────────────────────────────
+        exam_by_context = defaultdict(dict)
+        for item in exam_qs:
+            ctx_key = (item.class_name, item.branch, item.academic_term)
+            date_obj = item.exam_schedule_date
+            dates_map = exam_by_context[ctx_key]
+            if date_obj.id not in dates_map:
+                dates_map[date_obj.id] = OrderedDict([
+                    ('id', date_obj.id),
+                    ('date', date_obj.date.isoformat()),
+                    ('exam_schedule_data', []),
+                ])
+            dates_map[date_obj.id]['exam_schedule_data'].append(OrderedDict([
+                ('id', item.id),
+                ('start_time', item.start_time.isoformat()),
+                ('end_time', item.end_time.isoformat()),
+                ('subject', item.subject),
+                ('room_number', item.room_number),
+                ('type', item.type),
+            ]))
+
+        # ── Collect all unique context keys ───────────────────────────
+        all_ctx_keys = sorted(
+            set(weekly_by_context.keys()) | set(exam_by_context.keys())
+        )
+
+        schedules = [
+            build_schedule_dictionary(
+                institute=institute,
+                class_name=class_name,
+                branch=branch,
+                academic_term=academic_term,
+                weekly_schedule=list(weekly_by_context.get((class_name, branch, academic_term), {}).values()),
+                exam_schedule=list(exam_by_context.get((class_name, branch, academic_term), {}).values()),
+            )
+            for class_name, branch, academic_term in all_ctx_keys
+        ]
+
+        return Response({'schedules': schedules})
+
+
+class WeeklyExamScheduleReferencesView(WeeklyExamScheduleMixin, APIView):
+    """Return schedule reference data in one response.
+
+    The schedule dialogs only need the syllabus tree plus professor IDs/names,
+    so this endpoint keeps the professor payload intentionally lightweight.
+    """
+
+    def get(self, request):
+        institute = request._verified_institute
+
+        courses = Course.objects.filter(institute=institute).prefetch_related(
+            'branches__academic_terms__subjects'
+        )
+        professors = Professor.objects.filter(institute=institute).only('id', 'name').order_by('id')
+
+        return Response({
+            'courses': CourseSerializer(courses, many=True).data,
+            'professors': [
+                OrderedDict([
+                    ('id', professor.id),
+                    ('name', professor.name),
+                ])
+                for professor in professors
+            ],
+        })
+
+
+class WeeklyExamScheduleWorkspaceView(WeeklyExamScheduleMixin, APIView):
+    """Return source + published schedule data for one hierarchy."""
+
+    def get(self, request):
+        institute = request._verified_institute
+        hierarchy = {
+            'class_name': request.query_params.get('class_name'),
+            'branch': request.query_params.get('branch'),
+            'academic_term': str(request.query_params.get('academic_term') or '').strip(),
+        }
+        missing = [key for key, value in hierarchy.items() if not value]
+        if missing:
+            raise ValidationError({
+                field: ['This field is required.']
+                for field in missing
+            })
+
+        weekly_schedule = serialize_weekly_entries(
+            filter_queryset_by_academic_term(
+                WeeklyScheduleData.objects.select_related('weekly_schedule_day').filter(
+                    institute=institute,
+                    class_name=hierarchy['class_name'],
+                    branch=hierarchy['branch'],
+                ).order_by('weekly_schedule_day_id', 'id'),
+                'academic_term',
+                hierarchy['academic_term'],
+                [],
+            )
+        )
+        exam_schedule = serialize_exam_entries(
+            filter_queryset_by_academic_term(
+                ExamScheduleData.objects.select_related('exam_schedule_date').filter(
+                    institute=institute,
+                    class_name=hierarchy['class_name'],
+                    branch=hierarchy['branch'],
+                ).order_by('exam_schedule_date_id', 'id'),
+                'academic_term',
+                hierarchy['academic_term'],
+                [],
+            )
+        )
+
+        published_weekly = (
+            filter_queryset_by_academic_term(
+                PublishedWeeklySchedule.objects.filter(
+                    institute=institute,
+                    class_name=hierarchy['class_name'],
+                    branch=hierarchy['branch'],
+                ).only('id', 'schedule_data'),
+                'academic_term',
+                hierarchy['academic_term'],
+                [],
+            )
+            .first()
+        )
+        published_exam = (
+            filter_queryset_by_academic_term(
+                PublishedExamSchedule.objects.filter(
+                    institute=institute,
+                    class_name=hierarchy['class_name'],
+                    branch=hierarchy['branch'],
+                ).only('id', 'schedule_data'),
+                'academic_term',
+                hierarchy['academic_term'],
+                [],
+            )
+            .first()
+        )
+
+        return Response(OrderedDict([
+            ('class_name', hierarchy['class_name']),
+            ('branch', hierarchy['branch']),
+            ('academic_term', hierarchy['academic_term']),
+            ('weekly_schedule', weekly_schedule),
+            ('exam_schedule', exam_schedule),
+            ('published_weekly_schedule', published_weekly.schedule_data if published_weekly else []),
+            ('published_exam_schedule', published_exam.schedule_data if published_exam else []),
+            ('published_weekly_id', published_weekly.id if published_weekly else None),
+            ('published_exam_id', published_exam.id if published_exam else None),
+        ]))
 
 
 class BaseScheduleEntryView(WeeklyExamScheduleMixin, APIView):

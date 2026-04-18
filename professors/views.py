@@ -4,6 +4,7 @@ from activity_feed.services import ActivityLogMixin
 from django.db.models import Prefetch
 from django.db.models import Q
 from rest_framework.viewsets import ModelViewSet
+from rest_framework.decorators import action
 from .models import Professor
 from .serializers import ProfessorSerializer, ProfessorIdLookUpSerializer
 from rest_framework.views import APIView
@@ -108,6 +109,13 @@ class ProfessorViewSet(ActivityLogMixin, InstituteDictResponseMixin, ModelViewSe
 
         serializer = self.get_serializer(queryset, many=True)
         return Response([self._build_verified_institute_response(institute, serializer.data)])
+
+    @action(detail=False, methods=['get'], url_path='bulk')
+    def bulk(self, request, *args, **kwargs):
+        institute = request._verified_institute
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(self._build_verified_institute_response(institute, serializer.data))
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()          # calls has_object_permission internally

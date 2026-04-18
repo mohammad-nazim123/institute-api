@@ -374,7 +374,7 @@ class ObtainedMarksView(ExamDataMixin, APIView):
             return Response({'detail': 'Students cannot write marks.'}, status=status.HTTP_403_FORBIDDEN)
         institute = request._verified_institute
         try:
-            obj = ObtainedMarks.objects.only('id').get(pk=pk, exam_data__institute=institute)
+            obj = ObtainedMarks.objects.only('id', 'student_id', 'exam_data_id').get(pk=pk, exam_data__institute=institute)
         except ObtainedMarks.DoesNotExist:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         deleted_payload = {'entity_id': obj.id, 'student_id': obj.student_id, 'exam_data_id': obj.exam_data_id}

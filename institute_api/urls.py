@@ -32,6 +32,7 @@ urlpatterns = [
     path('super_admin_account_details/', include('super_admin_account_details.urls')),
     path('employee_account_details/', include('employee_account_details.urls')),
     path('payment_notifications/', include('payment_notification.urls')),
+    path('data_analysis/', include('data_analysis.urls')),
     path('notifications/', include('notifications.urls')),
     path('exam/', include('set_exam_data.urls')),
     path('weekly_exam_schedule/', include('weekly_exam_schedule.urls')),

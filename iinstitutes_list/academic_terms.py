@@ -198,8 +198,8 @@ def rename_institute_academic_term(institute, old_value, new_value):
     if not alias_lookup:
         return {'total_updates': 0}
 
-    from attendance.models import Attendance
-    from published_exam_result.models import PublishedExamResult
+    from attendance.models import AttendanceSubmission
+    from published_exam_result.models import PublishedExamData
     from published_schedules.models import PublishedExamSchedule, PublishedWeeklySchedule
     from published_student.models import PublishedStudent
     from set_exam_data.models import ExamData
@@ -221,7 +221,7 @@ def rename_institute_academic_term(institute, old_value, new_value):
         new_value,
     )
     summary['attendance'] = _bulk_replace_term_values(
-        Attendance.objects.filter(student__institute=institute).only('id', 'year_semester'),
+        AttendanceSubmission.objects.filter(institute=institute).only('id', 'year_semester'),
         'year_semester',
         alias_lookup,
         new_value,
@@ -275,28 +275,12 @@ def rename_institute_academic_term(institute, old_value, new_value):
         PublishedStudent.objects.bulk_update(published_students_to_update, ['student_data'])
     summary['published_students'] = len(published_students_to_update)
 
-    published_exam_results_to_update = []
-    for snapshot in PublishedExamResult.objects.filter(institute=institute).only('id', 'exam_results'):
-        exam_results = []
-        changed = False
-
-        for item in list(snapshot.exam_results or []):
-            updated_item = dict(item)
-            current_value = updated_item.get('academic_term', '')
-            if _matches_academic_term(current_value, alias_lookup):
-                updated_item['academic_term'] = new_value
-                changed = True
-            exam_results.append(updated_item)
-
-        if not changed:
-            continue
-
-        snapshot.exam_results = exam_results
-        published_exam_results_to_update.append(snapshot)
-
-    if published_exam_results_to_update:
-        PublishedExamResult.objects.bulk_update(published_exam_results_to_update, ['exam_results'])
-    summary['published_exam_results'] = len(published_exam_results_to_update)
+    summary['published_exam_results'] = _bulk_replace_term_values(
+        PublishedExamData.objects.filter(institute=institute).only('id', 'academic_term'),
+        'academic_term',
+        alias_lookup,
+        new_value,
+    )
 
     summary['total_updates'] = sum(summary.values())
     return summary

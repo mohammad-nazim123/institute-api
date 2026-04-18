@@ -115,6 +115,31 @@ class PublishedProfessorListView(APIView):
     def _get_requested_professor_id(self, request):
         return request.query_params.get('professor_id') or request.data.get('professor_id')
 
+    def _get_requested_professor_ids(self, request):
+        if 'professor_ids' not in request.data:
+            return None
+
+        raw_ids = request.data.get('professor_ids')
+        if not isinstance(raw_ids, list):
+            raise ValueError('professor_ids must be a list of professor IDs.')
+
+        professor_ids = []
+        seen_ids = set()
+        for raw_id in raw_ids:
+            try:
+                professor_id = int(raw_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError('professor_ids must contain only valid professor IDs.') from exc
+
+            if professor_id <= 0:
+                raise ValueError('professor_ids must contain only valid professor IDs.')
+
+            if professor_id not in seen_ids:
+                professor_ids.append(professor_id)
+                seen_ids.add(professor_id)
+
+        return professor_ids
+
     def _sync_professor_snapshot(self, institute, professor, existing=None):
         professor_data = build_professor_snapshot(professor)
         professor_personal_id = get_professor_personal_id(professor_data)
@@ -151,6 +176,94 @@ class PublishedProfessorListView(APIView):
             update_fields=['name', 'email', 'professor_personal_id', 'professor_data', 'updated_at']
         )
         return existing, 'updated'
+
+    def _sync_professor_collection(self, institute, professors, delete_stale=False):
+        existing_map = {
+            snapshot.source_professor_id: snapshot
+            for snapshot in PublishedProfessor.objects.filter(institute=institute).only(
+                *PUBLISHED_ONLY_FIELDS,
+            )
+        }
+
+        current_professor_ids = set()
+        create_objects = []
+        update_objects = []
+        already_exists_professor_ids = []
+        now = timezone.now()
+
+        for professor in professors:
+            current_professor_ids.add(professor.id)
+            professor_data = build_professor_snapshot(professor)
+            professor_personal_id = get_professor_personal_id(professor_data)
+            existing = existing_map.get(professor.id)
+
+            if existing is None:
+                create_objects.append(
+                    PublishedProfessor(
+                        institute_id=institute.id,
+                        source_professor_id=professor.id,
+                        name=professor.name,
+                        email=professor.email,
+                        professor_personal_id=professor_personal_id,
+                        professor_data=professor_data,
+                        published_at=now,
+                        updated_at=now,
+                    )
+                )
+                continue
+
+            if not snapshot_has_changed(
+                existing,
+                professor.name,
+                professor.email,
+                professor_personal_id,
+                professor_data,
+            ):
+                already_exists_professor_ids.append(professor.id)
+                continue
+
+            existing.name = professor.name
+            existing.email = professor.email
+            existing.professor_personal_id = professor_personal_id
+            existing.professor_data = professor_data
+            existing.updated_at = now
+            update_objects.append(existing)
+
+        if create_objects:
+            PublishedProfessor.objects.bulk_create(create_objects)
+        if update_objects:
+            PublishedProfessor.objects.bulk_update(
+                update_objects,
+                ['name', 'email', 'professor_personal_id', 'professor_data', 'updated_at'],
+            )
+
+        stale_professor_ids = set()
+        if delete_stale:
+            stale_professor_ids = set(existing_map).difference(current_professor_ids)
+            if stale_professor_ids:
+                PublishedProfessor.objects.filter(
+                    institute=institute,
+                    source_professor_id__in=stale_professor_ids,
+                ).delete()
+
+        response_kwargs = {
+            'created_count': len(create_objects),
+            'updated_count': len(update_objects),
+            'already_exists_count': len(already_exists_professor_ids),
+            'deleted_count': len(stale_professor_ids),
+        }
+        if already_exists_professor_ids:
+            response_kwargs['message'] = ALREADY_EXISTS_MESSAGE
+            response_kwargs['already_exists_professor_ids'] = already_exists_professor_ids
+        if (
+            not create_objects
+            and not update_objects
+            and not stale_professor_ids
+            and already_exists_professor_ids
+        ):
+            response_kwargs['detail'] = ALREADY_EXISTS_MESSAGE
+
+        return current_professor_ids, response_kwargs
 
     def get(self, request):
         institute = request._verified_institute
@@ -212,98 +325,93 @@ class PublishedProfessorListView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        professors = list(get_professor_publish_queryset(institute))
-        existing_map = {
-            snapshot.source_professor_id: snapshot
-            for snapshot in PublishedProfessor.objects.filter(institute=institute).only(
-                *PUBLISHED_ONLY_FIELDS,
-            )
-        }
+        try:
+            requested_professor_ids = self._get_requested_professor_ids(request)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        current_professor_ids = set()
-        create_objects = []
-        update_objects = []
-        already_exists_count = 0
-        already_exists_professor_ids = []
-        now = timezone.now()
-
-        for professor in professors:
-            current_professor_ids.add(professor.id)
-            professor_data = build_professor_snapshot(professor)
-            professor_personal_id = get_professor_personal_id(professor_data)
-            existing = existing_map.get(professor.id)
-
-            if existing is None:
-                create_objects.append(
-                    PublishedProfessor(
-                        institute_id=institute.id,
-                        source_professor_id=professor.id,
-                        name=professor.name,
-                        email=professor.email,
-                        professor_personal_id=professor_personal_id,
-                        professor_data=professor_data,
-                        published_at=now,
-                        updated_at=now,
-                    )
+        if requested_professor_ids is not None:
+            if not requested_professor_ids:
+                response_kwargs = {
+                    'created_count': 0,
+                    'updated_count': 0,
+                    'already_exists_count': 0,
+                    'deleted_count': 0,
+                }
+                return Response(
+                    build_institute_response(institute, [], **response_kwargs),
+                    status=status.HTTP_200_OK,
                 )
-                continue
 
-            if not snapshot_has_changed(
-                existing,
-                professor.name,
-                professor.email,
-                professor_personal_id,
-                professor_data,
-            ):
-                already_exists_count += 1
-                already_exists_professor_ids.append(professor.id)
-                continue
+            professors = list(
+                get_professor_publish_queryset(institute)
+                .filter(id__in=requested_professor_ids)
+            )
+            found_professor_ids = {professor.id for professor in professors}
+            missing_professor_ids = [
+                professor_id
+                for professor_id in requested_professor_ids
+                if professor_id not in found_professor_ids
+            ]
+            if missing_professor_ids:
+                return Response(
+                    {
+                        'detail': 'Professor not found.',
+                        'missing_professor_ids': missing_professor_ids,
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
-            existing.name = professor.name
-            existing.email = professor.email
-            existing.professor_personal_id = professor_personal_id
-            existing.professor_data = professor_data
-            existing.updated_at = now
-            update_objects.append(existing)
-
-        if create_objects:
-            PublishedProfessor.objects.bulk_create(create_objects)
-        if update_objects:
-            PublishedProfessor.objects.bulk_update(
-                update_objects,
-                ['name', 'email', 'professor_personal_id', 'professor_data', 'updated_at'],
+            synced_professor_ids, response_kwargs = self._sync_professor_collection(
+                institute,
+                professors,
+                delete_stale=False,
+            )
+            serializer = PublishedProfessorSerializer(
+                get_published_professor_queryset(institute).filter(
+                    source_professor_id__in=synced_professor_ids,
+                ),
+                many=True,
             )
 
-        stale_professor_ids = set(existing_map).difference(current_professor_ids)
-        deleted_count = len(stale_professor_ids)
-        if deleted_count:
-            PublishedProfessor.objects.filter(
-                institute=institute,
-                source_professor_id__in=stale_professor_ids,
-            ).delete()
+            log_activity(
+                request,
+                action='sync',
+                entity_type='published professor data',
+                description=(
+                    f"Synced selected published professor data. Created {response_kwargs['created_count']}, "
+                    f"updated {response_kwargs['updated_count']}."
+                ),
+                details={**response_kwargs, 'requested_professor_ids': requested_professor_ids},
+            )
+            return Response(
+                build_institute_response(
+                    institute,
+                    serializer.data,
+                    **response_kwargs,
+                ),
+                status=status.HTTP_200_OK,
+            )
+
+        professors = list(get_professor_publish_queryset(institute))
+        _, response_kwargs = self._sync_professor_collection(
+            institute,
+            professors,
+            delete_stale=True,
+        )
 
         serializer = PublishedProfessorSerializer(
             get_published_professor_queryset(institute),
             many=True,
         )
-        response_kwargs = {
-            'created_count': len(create_objects),
-            'updated_count': len(update_objects),
-            'already_exists_count': already_exists_count,
-            'deleted_count': deleted_count,
-        }
-        if already_exists_count:
-            response_kwargs['message'] = ALREADY_EXISTS_MESSAGE
-            response_kwargs['already_exists_professor_ids'] = already_exists_professor_ids
-        if not create_objects and not update_objects and not deleted_count and already_exists_count:
-            response_kwargs['detail'] = ALREADY_EXISTS_MESSAGE
 
         log_activity(
             request,
             action='sync',
             entity_type='published professor data',
             description=(
-                f"Synced published professor data. Created {len(create_objects)}, updated {len(update_objects)}, removed {deleted_count}."
+                f"Synced published professor data. Created {response_kwargs['created_count']}, "
+                f"updated {response_kwargs['updated_count']}, removed {response_kwargs['deleted_count']}."
             ),
             details=response_kwargs,
         )

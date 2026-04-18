@@ -38,12 +38,32 @@ class InstituteSerializer(ModelSerializer):
         return data
 
 
+class InstituteSummarySerializer(ModelSerializer):
+    institute_name = serializers.CharField()
+
+    class Meta:
+        model = Institute
+        fields = [
+            'id',
+            'institute_name',
+            'super_admin_name',
+            'event_status',
+            'event_timer_end',
+        ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['name'] = data['institute_name']
+        return data
+
+
 class InstituteVerifySerializer(serializers.Serializer):
     """Serializer for verifying institute access via name + admin_key."""
     institute_name = serializers.CharField(max_length=255, required=False, allow_blank=False)
     name = serializers.CharField(max_length=255, required=False, allow_blank=False)
     super_admin_name = serializers.CharField(max_length=255, required=False, allow_blank=False)
     admin_key = serializers.CharField(max_length=32)
+    include_detail = serializers.BooleanField(required=False, default=True)
 
     def validate(self, attrs):
         institute_name = attrs.get('institute_name') or attrs.get('name')
